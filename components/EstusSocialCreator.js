@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 const BRAND_COLORS = {
   "White": "#FFFFFF",
@@ -141,14 +141,27 @@ export default function EstusSocialCreator() {
 
   const handleExport = useCallback(async () => {
     setExporting(true);
-    await new Promise((r) => setTimeout(r, 100));
     try {
+      // Ensure all fonts used are loaded before drawing to canvas
+      if (document.fonts) {
+        const fontLoads = blocks.map((b) => {
+          const style = b.italic ? "italic" : "normal";
+          return document.fonts.load(`${style} ${b.weight} ${b.size}px ${FONTS[b.font]}`);
+        });
+        await Promise.all(fontLoads);
+        await document.fonts.ready;
+      }
+
       const canvas = document.createElement("canvas");
       canvas.width = size.w;
       canvas.height = size.h;
       const ctx = canvas.getContext("2d");
+
+      // Background colour
       ctx.fillStyle = BRAND_COLORS[bgColor];
       ctx.fillRect(0, 0, size.w, size.h);
+
+      // Background image + overlay
       if (bgImageObj) {
         ctx.save();
         if (bgBlur > 0) {
@@ -160,52 +173,88 @@ export default function EstusSocialCreator() {
         }
         ctx.restore();
         if (overlayOpacity > 0) {
-          ctx.fillStyle = OVERLAY_COLORS[overlayColor] || "#000000";
+          ctx.save();
           ctx.globalAlpha = overlayOpacity;
+          ctx.fillStyle = OVERLAY_COLORS[overlayColor] || "#000000";
           ctx.fillRect(0, 0, size.w, size.h);
-          ctx.globalAlpha = 1;
+          ctx.restore();
         }
       }
-      let totalHeight = 0;
+
+      // letter-spacing in CSS is: block.letterSpacing * (block.size / 18) px per character gap
+      // (same formula as preview, just at scale 1)
+      const letterSpacingPx = (block) => block.letterSpacing * (block.size / 18);
+
+      // Measure the true rendered width of a line including letter-spacing
+      const measureLineWidth = (line, spacingPx) => {
+        if (!line) return 0;
+        if (spacingPx === 0) return ctx.measureText(line).width;
+        let w = 0;
+        for (const ch of line) w += ctx.measureText(ch).width;
+        // CSS letter-spacing adds spacing after each character (n chars → n gaps)
+        w += spacingPx * line.length;
+        return w;
+      };
+
+      // Pre-measure all blocks so we can compute total height for vertical alignment
       const measured = blocks.map((block) => {
-        const fontSize = block.size;
-        const lh = fontSize * block.lineHeight;
         const text = block.uppercase ? block.text.toUpperCase() : block.text;
         const lines = text.split("\n");
+        const lh = block.size * block.lineHeight;
         const blockH = lines.length * lh;
-        totalHeight += block.marginTop + blockH;
-        return { ...block, lines, lh, blockH, fontSize, displayText: text };
+        const spacingPx = letterSpacingPx(block);
+        return { ...block, lines, lh, blockH, spacingPx };
       });
+
+      const totalHeight = measured.reduce((sum, b) => sum + b.marginTop + b.blockH, 0);
+
       let y;
       if (verticalAlign === "top") y = padding;
       else if (verticalAlign === "bottom") y = size.h - padding - totalHeight;
       else y = (size.h - totalHeight) / 2;
+
+      ctx.textBaseline = "top";
+
       measured.forEach((block) => {
         y += block.marginTop;
+
         const fontStyle = block.italic ? "italic" : "normal";
-        const fontStr = `${fontStyle} ${block.weight} ${block.fontSize}px ${FONTS[block.font]}`;
+        const fontStr = `${fontStyle} ${block.weight} ${block.size}px ${FONTS[block.font]}`;
         ctx.font = fontStr;
         ctx.fillStyle = BRAND_COLORS[block.color];
-        ctx.textBaseline = "top";
+
+        // CSS line-height centres the glyph in the line box with equal space above/below.
+        // textBaseline "top" draws from the top of the em square, so we offset by half-leading
+        // to match the visual position in the browser preview.
+        const halfLeading = block.size * (block.lineHeight - 1) / 2;
+
         block.lines.forEach((line) => {
+          // Re-set font in case any previous draw mutated ctx state
           ctx.font = fontStr;
-          const metrics = ctx.measureText(line);
+
+          const lineW = measureLineWidth(line, block.spacingPx);
+
           let x;
           if (block.align === "left") x = padding;
-          else if (block.align === "right") x = size.w - padding - metrics.width;
-          else x = (size.w - metrics.width) / 2;
-          if (block.letterSpacing > 0) {
+          else if (block.align === "right") x = size.w - padding - lineW;
+          else x = (size.w - lineW) / 2;
+
+          const drawY = y + halfLeading;
+
+          if (block.spacingPx !== 0) {
             let cx = x;
             for (const char of line) {
-              ctx.fillText(char, cx, y);
-              cx += ctx.measureText(char).width + block.letterSpacing * (block.fontSize / 18);
+              ctx.fillText(char, cx, drawY);
+              cx += ctx.measureText(char).width + block.spacingPx;
             }
           } else {
-            ctx.fillText(line, x, y);
+            ctx.fillText(line, x, drawY);
           }
+
           y += block.lh;
         });
       });
+
       const link = document.createElement("a");
       link.download = `estus-social-${Date.now()}.png`;
       link.href = canvas.toDataURL("image/png");
@@ -250,13 +299,19 @@ export default function EstusSocialCreator() {
     setSelectedId(null);
   }, []);
 
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") setSelectedId(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const renderPreviewBlock = (block) => {
     const text = block.uppercase ? block.text.toUpperCase() : block.text;
     const lines = text.split("\n");
     return (
       <div
         key={block.id}
-        onClick={(e) => { e.stopPropagation(); setSelectedId(block.id); }}
+        onClick={(e) => { e.stopPropagation(); setSelectedId((prev) => prev === block.id ? null : block.id); }}
         style={{
           marginTop: block.marginTop * scale,
           textAlign: block.align,
@@ -295,12 +350,12 @@ export default function EstusSocialCreator() {
     <div style={{ display: "flex", height: "100vh", background: "#111", color: "#eee", fontFamily: "'Inter', sans-serif", overflow: "hidden" }}>
       <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display: "none" }} />
       {/* Preview */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, minWidth: 0, position: "relative" }}>
+      <div onClick={() => setSelectedId(null)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, minWidth: 0, position: "relative" }}>
         <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", justifyContent: "center" }}>
           {Object.keys(CANVAS_SIZES).map((name) => (
             <button
               key={name}
-              onClick={() => setCanvasSize(name)}
+              onClick={(e) => { e.stopPropagation(); setCanvasSize(name); }}
               style={{
                 padding: "4px 10px",
                 fontSize: 11,
@@ -366,7 +421,7 @@ export default function EstusSocialCreator() {
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <button
-            onClick={handleExport}
+            onClick={(e) => { e.stopPropagation(); handleExport(); }}
             disabled={exporting}
             style={{
               padding: "10px 28px",
@@ -385,7 +440,7 @@ export default function EstusSocialCreator() {
             {exporting ? "Exporting..." : "Export PNG"}
           </button>
           <button
-            onClick={() => setShowSidebar(!showSidebar)}
+            onClick={(e) => { e.stopPropagation(); setShowSidebar(!showSidebar); }}
             style={{
               padding: "10px 16px",
               fontSize: 13,
