@@ -32,13 +32,15 @@ const CANVAS_SIZES = {
   "Facebook (1200x630)": { w: 1200, h: 630 },
   "YouTube Thumb (1280x720)": { w: 1280, h: 720 },
 };
+const STRIKE_STYLES = ["straight", "double", "diagonal", "wavy", "scribble", "marker"];
 const BLOCK_PRESETS = {
-  "Eyebrow": { font: "Oswald", size: 18, weight: 400, color: "Light Grey", letterSpacing: 8, uppercase: true, italic: false, align: "center", lineHeight: 1.2 },
-  "Hero Bold": { font: "Oswald", size: 96, weight: 700, color: "White", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 0.95 },
-  "Hero Accent": { font: "Oswald", size: 96, weight: 700, color: "Estus Orange", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 0.95 },
-  "Serif Subtitle": { font: "Libre Baskerville", size: 36, weight: 400, color: "Cream", letterSpacing: 0, uppercase: false, italic: true, align: "center", lineHeight: 1.3 },
-  "Body": { font: "Inter", size: 24, weight: 400, color: "Light Grey", letterSpacing: 0, uppercase: false, italic: false, align: "center", lineHeight: 1.5 },
-  "CTA Label": { font: "Oswald", size: 22, weight: 600, color: "White", letterSpacing: 4, uppercase: true, italic: false, align: "center", lineHeight: 1.2 },
+  "Eyebrow": { font: "Oswald", size: 18, weight: 400, color: "Light Grey", letterSpacing: 8, uppercase: true, italic: false, align: "center", lineHeight: 1.2, strikethrough: false, strikeStyle: "straight" },
+  "Hero Bold": { font: "Oswald", size: 96, weight: 700, color: "White", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 0.95, strikethrough: false, strikeStyle: "straight" },
+  "Hero Accent": { font: "Oswald", size: 96, weight: 700, color: "Estus Orange", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 0.95, strikethrough: false, strikeStyle: "straight" },
+  "Serif Subtitle": { font: "Libre Baskerville", size: 36, weight: 400, color: "Cream", letterSpacing: 0, uppercase: false, italic: true, align: "center", lineHeight: 1.3, strikethrough: false, strikeStyle: "straight" },
+  "Body": { font: "Inter", size: 24, weight: 400, color: "Light Grey", letterSpacing: 0, uppercase: false, italic: false, align: "center", lineHeight: 1.5, strikethrough: false, strikeStyle: "straight" },
+  "CTA Label": { font: "Oswald", size: 22, weight: 600, color: "White", letterSpacing: 4, uppercase: true, italic: false, align: "center", lineHeight: 1.2, strikethrough: false, strikeStyle: "straight" },
+  "Checklist Item": { font: "Inter", size: 32, weight: 500, color: "Cream", letterSpacing: 0, uppercase: false, italic: false, align: "left", lineHeight: 1.4, strikethrough: false, strikeStyle: "straight" },
 };
 const defaultBlocks = [
   { id: "1", text: "OCCUPATIONAL THERAPY", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
@@ -105,6 +107,7 @@ export default function EstusSocialCreator() {
         presetName === "Hero Accent" ? "ACCENT" :
         presetName === "Serif Subtitle" ? "Subtitle here." :
         presetName === "CTA Label" ? "BUTTON TEXT" :
+        presetName === "Checklist Item" ? "Checklist item." :
         "Body text here.",
       ...preset,
       marginTop: 16,
@@ -251,6 +254,10 @@ export default function EstusSocialCreator() {
             ctx.fillText(line, x, drawY);
           }
 
+          if (block.strikethrough && line) {
+            drawStrike(ctx, block.strikeStyle, x, drawY, lineW, block.size, BRAND_COLORS[block.color]);
+          }
+
           y += block.lh;
         });
       });
@@ -294,6 +301,18 @@ export default function EstusSocialCreator() {
         { id: String(++blockIdCounter), text: "70%", ...BLOCK_PRESETS["Hero Bold"], size: 160, color: "White", marginTop: 16 },
         { id: String(++blockIdCounter), text: "of late-diagnosed autistic adults\nreport burnout as their\nprimary presentation.", ...BLOCK_PRESETS["Body"], size: 26, color: "Cream", marginTop: 8 },
         { id: String(++blockIdCounter), text: "ESTUS HEALTH", ...BLOCK_PRESETS["Eyebrow"], marginTop: 48 },
+      ]);
+    } else if (name === "therapy-goals") {
+      setBlocks([
+        { id: String(++blockIdCounter), text: "OCCUPATIONAL THERAPY", ...BLOCK_PRESETS["Eyebrow"], align: "left", marginTop: 0 },
+        { id: String(++blockIdCounter), text: "WHAT IS YOUR\nNEXT THERAPY\nGOAL?", ...BLOCK_PRESETS["Hero Bold"], size: 72, align: "left", marginTop: 20 },
+        { id: String(++blockIdCounter), text: "Set a regular sleep schedule", ...BLOCK_PRESETS["Checklist Item"], marginTop: 36, strikethrough: true, strikeStyle: "straight" },
+        { id: String(++blockIdCounter), text: "Build a sensory toolkit", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12, strikethrough: true, strikeStyle: "wavy" },
+        { id: String(++blockIdCounter), text: "Practice unmasking with safe people", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
+        { id: String(++blockIdCounter), text: "Identify burnout triggers", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
+        { id: String(++blockIdCounter), text: "Plan recovery time after socialising", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
+        { id: String(++blockIdCounter), text: "Ask for accommodations at work", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
+        { id: String(++blockIdCounter), text: "Schedule a self-care ritual weekly", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
       ]);
     }
     setSelectedId(null);
@@ -339,7 +358,16 @@ export default function EstusSocialCreator() {
               whiteSpace: "pre",
             }}
           >
-            {line}
+            <span style={{ position: "relative", display: "inline-block" }}>
+              {line || " "}
+              {block.strikethrough && line && (
+                <StrikeOverlay
+                  variant={block.strikeStyle}
+                  color={BRAND_COLORS[block.color]}
+                  fontSize={block.size * scale}
+                />
+              )}
+            </span>
           </div>
         ))}
       </div>
@@ -465,6 +493,7 @@ export default function EstusSocialCreator() {
               ["quote-card", "Quote Card"],
               ["protocol-tip", "Protocol Tip"],
               ["stat-callout", "Stat Callout"],
+              ["therapy-goals", "Therapy Goals"],
             ].map(([key, label]) => (
               <button
                 key={key}
@@ -617,9 +646,12 @@ export default function EstusSocialCreator() {
               >
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, marginRight: 8 }}>
                   <span style={{ color: "#888", marginRight: 4 }}>{i + 1}.</span>
-                  {b.text.split("\n")[0].substring(0, 24)}
+                  <span style={{ textDecoration: b.strikethrough ? "line-through" : "none" }}>
+                    {b.text.split("\n")[0].substring(0, 22)}
+                  </span>
                 </span>
                 <div style={{ display: "flex", gap: 2 }}>
+                  <MiniBtn onClick={(e) => { e.stopPropagation(); updateBlock(b.id, { strikethrough: !b.strikethrough }); }} active={b.strikethrough}>S</MiniBtn>
                   <MiniBtn onClick={(e) => { e.stopPropagation(); moveBlock(b.id, -1); }}>↑</MiniBtn>
                   <MiniBtn onClick={(e) => { e.stopPropagation(); moveBlock(b.id, 1); }}>↓</MiniBtn>
                   <MiniBtn onClick={(e) => { e.stopPropagation(); duplicateBlock(b.id); }}>⎘</MiniBtn>
@@ -679,8 +711,34 @@ export default function EstusSocialCreator() {
                 <div style={{ display: "flex", gap: 4 }}>
                   <ToggleBtn active={selected.uppercase} onClick={() => updateBlock(selected.id, { uppercase: !selected.uppercase })}>ABC</ToggleBtn>
                   <ToggleBtn active={selected.italic} onClick={() => updateBlock(selected.id, { italic: !selected.italic })}><em>I</em></ToggleBtn>
+                  <ToggleBtn active={!!selected.strikethrough} onClick={() => updateBlock(selected.id, { strikethrough: !selected.strikethrough })}><span style={{ textDecoration: "line-through" }}>S</span></ToggleBtn>
                 </div>
               </Row>
+              {selected.strikethrough && (
+                <Row label="Strike">
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 3, justifyContent: "flex-end" }}>
+                    {STRIKE_STYLES.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => updateBlock(selected.id, { strikeStyle: s })}
+                        title={s}
+                        style={{
+                          padding: "3px 8px",
+                          fontSize: 10,
+                          background: (selected.strikeStyle || "straight") === s ? "#E87A2E" : "#333",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: 3,
+                          cursor: "pointer",
+                          textTransform: "capitalize",
+                        }}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </Row>
+              )}
               <div style={{ marginTop: 12 }}>
                 <div style={{ fontSize: 10, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Apply Preset Style</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -701,6 +759,85 @@ export default function EstusSocialCreator() {
       )}
     </div>
   );
+}
+
+function drawStrike(ctx, variant, x, drawY, w, fontSize, color) {
+  if (!w || w <= 0) return;
+  const thickness = Math.max(1, fontSize * 0.06);
+  const centerY = drawY + fontSize * 0.5;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = thickness;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  if (variant === "double") {
+    const offset = thickness * 1.1;
+    ctx.beginPath();
+    ctx.moveTo(x, centerY - offset);
+    ctx.lineTo(x + w, centerY - offset);
+    ctx.moveTo(x, centerY + offset);
+    ctx.lineTo(x + w, centerY + offset);
+    ctx.stroke();
+  } else if (variant === "diagonal") {
+    ctx.beginPath();
+    ctx.moveTo(x, drawY + fontSize * 0.92);
+    ctx.lineTo(x + w, drawY + fontSize * 0.08);
+    ctx.stroke();
+  } else if (variant === "wavy") {
+    const period = fontSize * 0.45;
+    const amp = fontSize * 0.09;
+    ctx.beginPath();
+    ctx.moveTo(x, centerY);
+    let cx = x;
+    let dir = 1;
+    while (cx < x + w) {
+      const half = period / 2;
+      const next = Math.min(cx + half, x + w);
+      const ctrlX = (cx + next) / 2;
+      const ctrlY = centerY + amp * dir;
+      ctx.quadraticCurveTo(ctrlX, ctrlY, next, centerY);
+      cx = next;
+      dir *= -1;
+    }
+    ctx.stroke();
+  } else if (variant === "scribble") {
+    const segs = Math.max(8, Math.round(w / (fontSize * 0.45)));
+    const amp = thickness * 1.4;
+    const drawPath = (phase, lineW, opacity) => {
+      ctx.globalAlpha = opacity;
+      ctx.lineWidth = lineW;
+      ctx.beginPath();
+      ctx.moveTo(x, centerY + Math.sin(phase) * amp);
+      for (let s = 1; s <= segs; s++) {
+        const px = x + (w * s) / segs;
+        const py = centerY + Math.sin(phase + s * 1.9) * amp;
+        ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    };
+    drawPath(0, thickness, 1);
+    drawPath(Math.PI, thickness * 0.7, 0.55);
+  } else if (variant === "marker") {
+    ctx.globalAlpha = 0.4;
+    const h = fontSize * 0.6;
+    const r = thickness;
+    const top = drawY + fontSize * 0.2;
+    if (typeof ctx.roundRect === "function") {
+      ctx.beginPath();
+      ctx.roundRect(x, top, w, h, r);
+      ctx.fill();
+    } else {
+      ctx.fillRect(x, top, w, h);
+    }
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(x, centerY + fontSize * 0.05);
+    ctx.lineTo(x + w, centerY + fontSize * 0.05);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawImageFit(ctx, img, cw, ch, fit, posX, posY, bleedExtra) {
@@ -738,6 +875,101 @@ function drawImageFit(ctx, img, cw, ch, fit, posX, posY, bleedExtra) {
     }
   }
   ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+}
+
+function StrikeOverlay({ variant, color, fontSize }) {
+  const thickness = Math.max(1, fontSize * 0.06);
+  const baseStyle = {
+    position: "absolute",
+    inset: 0,
+    width: "100%",
+    height: "100%",
+    pointerEvents: "none",
+    overflow: "visible",
+  };
+
+  if (variant === "double") {
+    const offset = thickness * 1.1;
+    return (
+      <svg style={baseStyle} preserveAspectRatio="none">
+        <line x1="0" y1={`calc(50% - ${offset}px)`} x2="100%" y2={`calc(50% - ${offset}px)`} stroke={color} strokeWidth={thickness} strokeLinecap="round" />
+        <line x1="0" y1={`calc(50% + ${offset}px)`} x2="100%" y2={`calc(50% + ${offset}px)`} stroke={color} strokeWidth={thickness} strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (variant === "diagonal") {
+    return (
+      <svg style={baseStyle} preserveAspectRatio="none">
+        <line x1="0%" y1="92%" x2="100%" y2="8%" stroke={color} strokeWidth={thickness} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+      </svg>
+    );
+  }
+
+  if (variant === "wavy") {
+    return (
+      <svg style={baseStyle} preserveAspectRatio="none" viewBox="0 0 100 20">
+        <path
+          d="M 0 10 Q 2.5 3 5 10 T 10 10 T 15 10 T 20 10 T 25 10 T 30 10 T 35 10 T 40 10 T 45 10 T 50 10 T 55 10 T 60 10 T 65 10 T 70 10 T 75 10 T 80 10 T 85 10 T 90 10 T 95 10 T 100 10"
+          fill="none"
+          stroke={color}
+          strokeWidth={thickness}
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+    );
+  }
+
+  if (variant === "scribble") {
+    return (
+      <svg style={baseStyle} preserveAspectRatio="none" viewBox="0 0 100 20">
+        <path
+          d="M 0 9 L 6 13 L 12 7 L 18 13 L 24 8 L 30 12 L 36 7 L 42 13 L 48 8 L 54 12 L 60 7 L 66 13 L 72 8 L 78 12 L 84 7 L 90 13 L 96 8 L 100 11"
+          fill="none"
+          stroke={color}
+          strokeWidth={thickness}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+        <path
+          d="M 0 11 L 6 7 L 12 13 L 18 8 L 24 12 L 30 7 L 36 13 L 42 8 L 48 12 L 54 7 L 60 13 L 66 8 L 72 12 L 78 7 L 84 13 L 90 8 L 96 12 L 100 9"
+          fill="none"
+          stroke={color}
+          strokeWidth={thickness * 0.7}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+          opacity="0.55"
+        />
+      </svg>
+    );
+  }
+
+  if (variant === "marker") {
+    return (
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          top: "20%",
+          height: "60%",
+          background: color,
+          opacity: 0.4,
+          borderRadius: thickness,
+          pointerEvents: "none",
+        }}
+      />
+    );
+  }
+
+  return (
+    <svg style={baseStyle} preserveAspectRatio="none">
+      <line x1="0" y1="55%" x2="100%" y2="55%" stroke={color} strokeWidth={thickness} strokeLinecap="round" />
+    </svg>
+  );
 }
 
 function SectionLabel({ children, style }) {
@@ -781,11 +1013,13 @@ function ColorPicker({ value, onChange }) {
   );
 }
 
-function MiniBtn({ children, onClick, danger }) {
+function MiniBtn({ children, onClick, danger, active }) {
+  const bg = danger ? "#4a2020" : active ? "#E87A2E" : "#333";
+  const color = danger ? "#f88" : active ? "#fff" : "#aaa";
   return (
     <button
       onClick={onClick}
-      style={{ width: 20, height: 20, fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", background: danger ? "#4a2020" : "#333", color: danger ? "#f88" : "#aaa", border: "none", borderRadius: 3, cursor: "pointer", padding: 0 }}
+      style={{ width: 20, height: 20, fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", background: bg, color, border: "none", borderRadius: 3, cursor: "pointer", padding: 0 }}
     >
       {children}
     </button>
