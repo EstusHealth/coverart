@@ -2,22 +2,83 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 
-const BRAND_COLORS = {
-  "White": "#FFFFFF",
-  "Estus Orange": "#E87A2E",
-  "Noctua Brown": "#8B5A3C",
-  "Light Grey": "#9CA3AF",
-  "Mid Grey": "#6B7280",
-  "Dark Grey": "#374151",
-  "Off-Black": "#1A1A1A",
-  "Pure Black": "#000000",
-  "Cream": "#E8DDD0",
+const BRANDS = {
+  "Estus": {
+    accent: "#E87A2E",
+    defaultBg: "Off-Black",
+    colors: {
+      "White": "#FFFFFF",
+      "Estus Orange": "#E87A2E",
+      "Noctua Brown": "#8B5A3C",
+      "Light Grey": "#9CA3AF",
+      "Mid Grey": "#6B7280",
+      "Dark Grey": "#374151",
+      "Off-Black": "#1A1A1A",
+      "Pure Black": "#000000",
+      "Cream": "#E8DDD0",
+    },
+    overlays: {
+      "Black": "#000000",
+      "Off-Black": "#1A1A1A",
+      "Noctua Brown": "#8B5A3C",
+      "Estus Orange": "#E87A2E",
+    },
+  },
+  "Health": {
+    accent: "#2AA2B4",
+    defaultBg: "White",
+    colors: {
+      "White": "#FFFFFF",
+      "Primary Navy": "#30487E",
+      "Deep Navy": "#1E305A",
+      "Teal": "#2AA2B4",
+      "Magenta": "#A85A90",
+      "Gradient Blue": "#629FB8",
+      "Gradient Violet": "#686495",
+      "Gradient Purple": "#6F528B",
+      "Health Gradient": { gradient: ["#629FB8", "#686495", "#6F528B"] },
+    },
+    overlays: {
+      "Black": "#000000",
+      "Deep Navy": "#1E305A",
+      "Primary Navy": "#30487E",
+      "Teal": "#2AA2B4",
+    },
+  },
 };
-const OVERLAY_COLORS = {
-  "Black": "#000000",
-  "Off-Black": "#1A1A1A",
-  "Noctua Brown": "#8B5A3C",
-  "Estus Orange": "#E87A2E",
+const ALL_COLORS = { ...BRANDS["Estus"].colors, ...BRANDS["Health"].colors };
+const ALL_OVERLAYS = { ...BRANDS["Estus"].overlays, ...BRANDS["Health"].overlays };
+// Colour-name translations INTO each brand, applied when switching brand and
+// when instantiating the (Estus-named) presets/templates under another brand.
+const BRAND_REMAP = {
+  "Health": {
+    text: { "White": "Primary Navy", "Estus Orange": "Teal", "Noctua Brown": "Primary Navy", "Light Grey": "Deep Navy", "Mid Grey": "Deep Navy", "Dark Grey": "Deep Navy", "Off-Black": "Deep Navy", "Pure Black": "Deep Navy", "Cream": "Magenta" },
+    bg: { "Off-Black": "White", "Pure Black": "Deep Navy", "Cream": "White", "Light Grey": "White", "Mid Grey": "Deep Navy", "Dark Grey": "Deep Navy", "Estus Orange": "Teal", "Noctua Brown": "Primary Navy" },
+    overlay: { "Off-Black": "Deep Navy", "Noctua Brown": "Primary Navy", "Estus Orange": "Teal" },
+  },
+  "Estus": {
+    text: { "Primary Navy": "White", "Deep Navy": "Light Grey", "Teal": "Estus Orange", "Magenta": "Cream", "Gradient Blue": "Light Grey", "Gradient Violet": "Mid Grey", "Gradient Purple": "Noctua Brown", "Health Gradient": "Estus Orange" },
+    bg: { "White": "Off-Black", "Deep Navy": "Off-Black", "Primary Navy": "Off-Black", "Teal": "Estus Orange", "Magenta": "Noctua Brown", "Gradient Blue": "Off-Black", "Gradient Violet": "Off-Black", "Gradient Purple": "Off-Black", "Health Gradient": "Off-Black" },
+    overlay: { "Deep Navy": "Off-Black", "Primary Navy": "Noctua Brown", "Teal": "Estus Orange" },
+  },
+};
+// Colour values are either a hex string or { gradient: [stops] }
+const colorValue = (name) => ALL_COLORS[name] || "#FFFFFF";
+const isGradient = (name) => typeof colorValue(name) === "object";
+const solidColor = (name) => {
+  const v = colorValue(name);
+  return typeof v === "string" ? v : v.gradient[Math.floor(v.gradient.length / 2)];
+};
+const cssBackground = (name, angle = 90) => {
+  const v = colorValue(name);
+  return typeof v === "string" ? v : `linear-gradient(${angle}deg, ${v.gradient.join(", ")})`;
+};
+const canvasFill = (ctx, name, x0, y0, x1, y1) => {
+  const v = colorValue(name);
+  if (typeof v === "string") return v;
+  const g = ctx.createLinearGradient(x0, y0, Math.max(x1, x0 + 1), y1);
+  v.gradient.forEach((c, i) => g.addColorStop(i / (v.gradient.length - 1), c));
+  return g;
 };
 const FONTS = {
   "Oswald": "'Oswald', sans-serif",
@@ -52,6 +113,7 @@ const defaultBlocks = [
 let blockIdCounter = 100;
 
 export default function EstusSocialCreator() {
+  const [brand, setBrand] = useState("Estus");
   const [blocks, setBlocks] = useState(defaultBlocks);
   const [selectedId, setSelectedId] = useState(null);
   const [canvasSize, setCanvasSize] = useState("IG Story (1080x1920)");
@@ -97,6 +159,18 @@ export default function EstusSocialCreator() {
     setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...updates } : b)));
   }, []);
 
+  // Presets/templates are written with Estus colour names; translate into the active brand
+  const presetColor = useCallback((color) => BRAND_REMAP[brand].text[color] || color, [brand]);
+
+  const switchBrand = useCallback((next) => {
+    if (next === brand) return;
+    const map = BRAND_REMAP[next];
+    setBlocks((prev) => prev.map((b) => ({ ...b, color: map.text[b.color] || b.color })));
+    setBgColor((c) => map.bg[c] || (BRANDS[next].colors[c] ? c : BRANDS[next].defaultBg));
+    setOverlayColor((c) => map.overlay[c] || (BRANDS[next].overlays[c] ? c : "Black"));
+    setBrand(next);
+  }, [brand]);
+
   const addBlock = useCallback((presetName) => {
     const preset = BLOCK_PRESETS[presetName];
     const newBlock = {
@@ -110,11 +184,12 @@ export default function EstusSocialCreator() {
         presetName === "Checklist Item" ? "Checklist item." :
         "Body text here.",
       ...preset,
+      color: presetColor(preset.color),
       marginTop: 16,
     };
     setBlocks((prev) => [...prev, newBlock]);
     setSelectedId(newBlock.id);
-  }, []);
+  }, [presetColor]);
 
   const removeBlock = useCallback((id) => {
     setBlocks((prev) => prev.filter((b) => b.id !== id));
@@ -161,7 +236,7 @@ export default function EstusSocialCreator() {
       const ctx = canvas.getContext("2d");
 
       // Background colour
-      ctx.fillStyle = BRAND_COLORS[bgColor];
+      ctx.fillStyle = canvasFill(ctx, bgColor, 0, 0, size.w, size.h);
       ctx.fillRect(0, 0, size.w, size.h);
 
       // Background image + overlay
@@ -178,7 +253,7 @@ export default function EstusSocialCreator() {
         if (overlayOpacity > 0) {
           ctx.save();
           ctx.globalAlpha = overlayOpacity;
-          ctx.fillStyle = OVERLAY_COLORS[overlayColor] || "#000000";
+          ctx.fillStyle = ALL_OVERLAYS[overlayColor] || "#000000";
           ctx.fillRect(0, 0, size.w, size.h);
           ctx.restore();
         }
@@ -224,7 +299,6 @@ export default function EstusSocialCreator() {
         const fontStyle = block.italic ? "italic" : "normal";
         const fontStr = `${fontStyle} ${block.weight} ${block.size}px ${FONTS[block.font]}`;
         ctx.font = fontStr;
-        ctx.fillStyle = BRAND_COLORS[block.color];
 
         // CSS line-height centres the glyph in the line box with equal space above/below.
         // textBaseline "top" draws from the top of the em square, so we offset by half-leading
@@ -244,6 +318,9 @@ export default function EstusSocialCreator() {
 
           const drawY = y + halfLeading;
 
+          // Gradient fills span the rendered line, so set fill per line
+          ctx.fillStyle = canvasFill(ctx, block.color, x, 0, x + lineW, 0);
+
           if (block.spacingPx !== 0) {
             let cx = x;
             for (const char of line) {
@@ -255,7 +332,7 @@ export default function EstusSocialCreator() {
           }
 
           if (block.strikethrough && line) {
-            drawStrike(ctx, block.strikeStyle, x, drawY, lineW, block.size, BRAND_COLORS[block.color]);
+            drawStrike(ctx, block.strikeStyle, x, drawY, lineW, block.size, solidColor(block.color));
           }
 
           y += block.lh;
@@ -263,18 +340,19 @@ export default function EstusSocialCreator() {
       });
 
       const link = document.createElement("a");
-      link.download = `estus-social-${Date.now()}.png`;
+      link.download = `${brand === "Health" ? "estus-health" : "estus"}-social-${Date.now()}.png`;
       link.href = canvas.toDataURL("image/png");
       link.click();
     } catch (e) {
       console.error("Export error:", e);
     }
     setExporting(false);
-  }, [blocks, size, bgColor, bgImageObj, bgFit, bgPositionX, bgPositionY, bgBlur, overlayColor, overlayOpacity, padding, verticalAlign]);
+  }, [blocks, size, bgColor, bgImageObj, bgFit, bgPositionX, bgPositionY, bgBlur, overlayColor, overlayOpacity, padding, verticalAlign, brand]);
 
   const applyTemplate = useCallback((name) => {
+    const setBrandBlocks = (arr) => setBlocks(arr.map((b) => ({ ...b, color: presetColor(b.color) })));
     if (name === "hero-statement") {
-      setBlocks([
+      setBrandBlocks([
         { id: String(++blockIdCounter), text: "OCCUPATIONAL THERAPY", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
         { id: String(++blockIdCounter), text: "BEING\nYOURSELF", ...BLOCK_PRESETS["Hero Bold"], marginTop: 24 },
         { id: String(++blockIdCounter), text: "ISN'T THE\nPROBLEM.", ...BLOCK_PRESETS["Hero Accent"], marginTop: 0 },
@@ -282,13 +360,13 @@ export default function EstusSocialCreator() {
         { id: String(++blockIdCounter), text: "Neuroaffirming. Evidence-informed.\nEnvironment-focused.", ...BLOCK_PRESETS["Body"], marginTop: 24 },
       ]);
     } else if (name === "quote-card") {
-      setBlocks([
+      setBrandBlocks([
         { id: String(++blockIdCounter), text: "ESTUS HEALTH", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
         { id: String(++blockIdCounter), text: "Your brain isn't broken.\nThe system wasn't\nbuilt for you.", ...BLOCK_PRESETS["Serif Subtitle"], size: 44, marginTop: 40 },
         { id: String(++blockIdCounter), text: "www.estushealth.com", ...BLOCK_PRESETS["Body"], size: 18, color: "Mid Grey", marginTop: 48 },
       ]);
     } else if (name === "protocol-tip") {
-      setBlocks([
+      setBrandBlocks([
         { id: String(++blockIdCounter), text: "PERFORMANCE LAB: PROTOCOLS", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
         { id: String(++blockIdCounter), text: "PROTOCOL #12", ...BLOCK_PRESETS["Hero Bold"], size: 64, marginTop: 24 },
         { id: String(++blockIdCounter), text: "THE 2-MINUTE\nRULE", ...BLOCK_PRESETS["Hero Accent"], size: 72, marginTop: 0 },
@@ -296,14 +374,14 @@ export default function EstusSocialCreator() {
         { id: String(++blockIdCounter), text: "performancelab@estushealth.com", ...BLOCK_PRESETS["Body"], size: 16, color: "Mid Grey", marginTop: 40 },
       ]);
     } else if (name === "stat-callout") {
-      setBlocks([
+      setBrandBlocks([
         { id: String(++blockIdCounter), text: "DID YOU KNOW?", ...BLOCK_PRESETS["Eyebrow"], color: "Estus Orange", marginTop: 0 },
         { id: String(++blockIdCounter), text: "70%", ...BLOCK_PRESETS["Hero Bold"], size: 160, color: "White", marginTop: 16 },
         { id: String(++blockIdCounter), text: "of late-diagnosed autistic adults\nreport burnout as their\nprimary presentation.", ...BLOCK_PRESETS["Body"], size: 26, color: "Cream", marginTop: 8 },
         { id: String(++blockIdCounter), text: "ESTUS HEALTH", ...BLOCK_PRESETS["Eyebrow"], marginTop: 48 },
       ]);
     } else if (name === "therapy-goals") {
-      setBlocks([
+      setBrandBlocks([
         { id: String(++blockIdCounter), text: "OCCUPATIONAL THERAPY", ...BLOCK_PRESETS["Eyebrow"], align: "left", marginTop: 0 },
         { id: String(++blockIdCounter), text: "WHAT IS YOUR\nNEXT THERAPY\nGOAL?", ...BLOCK_PRESETS["Hero Bold"], size: 72, align: "left", marginTop: 20 },
         { id: String(++blockIdCounter), text: "Set a regular sleep schedule", ...BLOCK_PRESETS["Checklist Item"], marginTop: 36, strikethrough: true, strikeStyle: "straight" },
@@ -316,7 +394,7 @@ export default function EstusSocialCreator() {
       ]);
     }
     setSelectedId(null);
-  }, []);
+  }, [presetColor]);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") setSelectedId(null); };
@@ -352,18 +430,30 @@ export default function EstusSocialCreator() {
               fontSize: block.size * scale,
               fontWeight: block.weight,
               fontStyle: block.italic ? "italic" : "normal",
-              color: BRAND_COLORS[block.color],
+              color: isGradient(block.color) ? "transparent" : colorValue(block.color),
               letterSpacing: block.letterSpacing * scale * (block.size / 18),
               lineHeight: block.lineHeight,
               whiteSpace: "pre",
             }}
           >
-            <span style={{ position: "relative", display: "inline-block" }}>
+            <span
+              style={{
+                position: "relative",
+                display: "inline-block",
+                // background-clip: text must sit on the element that directly
+                // contains the text node, or Chromium won't paint it
+                ...(isGradient(block.color) ? {
+                  backgroundImage: cssBackground(block.color),
+                  WebkitBackgroundClip: "text",
+                  backgroundClip: "text",
+                } : {}),
+              }}
+            >
               {line || " "}
               {block.strikethrough && line && (
                 <StrikeOverlay
                   variant={block.strikeStyle}
-                  color={BRAND_COLORS[block.color]}
+                  color={solidColor(block.color)}
                   fontSize={block.size * scale}
                 />
               )}
@@ -404,7 +494,7 @@ export default function EstusSocialCreator() {
           style={{
             width: size.w * scale,
             height: size.h * scale,
-            background: BRAND_COLORS[bgColor],
+            background: cssBackground(bgColor, 135),
             display: "flex",
             flexDirection: "column",
             justifyContent: verticalAlign === "top" ? "flex-start" : verticalAlign === "bottom" ? "flex-end" : "center",
@@ -434,7 +524,7 @@ export default function EstusSocialCreator() {
                 style={{
                   position: "absolute",
                   inset: 0,
-                  backgroundColor: OVERLAY_COLORS[overlayColor] || "#000000",
+                  backgroundColor: ALL_OVERLAYS[overlayColor] || "#000000",
                   opacity: overlayOpacity,
                   zIndex: 1,
                 }}
@@ -486,6 +576,31 @@ export default function EstusSocialCreator() {
       {/* Sidebar */}
       {showSidebar && (
         <div style={{ width: 340, background: "#1a1a1a", borderLeft: "1px solid #333", overflowY: "auto", padding: 16, flexShrink: 0 }}>
+          <SectionLabel>Brand</SectionLabel>
+          <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+            {Object.keys(BRANDS).map((b) => (
+              <button
+                key={b}
+                onClick={() => switchBrand(b)}
+                style={{
+                  flex: 1,
+                  padding: "8px 6px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  fontFamily: "'Oswald', sans-serif",
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  background: brand === b ? BRANDS[b].accent : "#2a2a2a",
+                  color: brand === b ? "#fff" : "#ccc",
+                  border: brand === b ? "1px solid transparent" : "1px solid #444",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                }}
+              >
+                {b}
+              </button>
+            ))}
+          </div>
           <SectionLabel>Templates</SectionLabel>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 16 }}>
             {[
@@ -515,7 +630,7 @@ export default function EstusSocialCreator() {
           </div>
           <SectionLabel>Canvas</SectionLabel>
           <Row label="Background">
-            <ColorPicker value={bgColor} onChange={setBgColor} />
+            <ColorPicker value={bgColor} onChange={setBgColor} colors={BRANDS[brand].colors} accent={BRANDS[brand].accent} />
           </Row>
           <Row label="Padding">
             <RangeInput value={padding} min={20} max={120} onChange={setPadding} />
@@ -598,7 +713,7 @@ export default function EstusSocialCreator() {
               </div>
               <Row label="Color">
                 <div style={{ display: "flex", gap: 3 }}>
-                  {Object.entries(OVERLAY_COLORS).map(([name, hex]) => (
+                  {Object.entries(BRANDS[brand].overlays).map(([name, hex]) => (
                     <button
                       key={name}
                       title={name}
@@ -683,7 +798,7 @@ export default function EstusSocialCreator() {
                 </select>
               </Row>
               <Row label="Color">
-                <ColorPicker value={selected.color} onChange={(v) => updateBlock(selected.id, { color: v })} />
+                <ColorPicker value={selected.color} onChange={(v) => updateBlock(selected.id, { color: v })} colors={BRANDS[brand].colors} accent={BRANDS[brand].accent} />
               </Row>
               <Row label="Align">
                 <div style={{ display: "flex", gap: 4 }}>
@@ -745,7 +860,7 @@ export default function EstusSocialCreator() {
                   {Object.entries(BLOCK_PRESETS).map(([name, preset]) => (
                     <button
                       key={name}
-                      onClick={() => updateBlock(selected.id, { ...preset })}
+                      onClick={() => updateBlock(selected.id, { ...preset, color: presetColor(preset.color) })}
                       style={{ padding: "3px 8px", fontSize: 10, background: "#2a2a2a", color: "#999", border: "1px solid #444", borderRadius: 3, cursor: "pointer" }}
                     >
                       {name}
@@ -998,17 +1113,20 @@ function RangeInput({ value, min, max, step = 1, onChange }) {
   );
 }
 
-function ColorPicker({ value, onChange }) {
+function ColorPicker({ value, onChange, colors, accent }) {
   return (
     <div style={{ display: "flex", gap: 3, flexWrap: "wrap", justifyContent: "flex-end" }}>
-      {Object.entries(BRAND_COLORS).map(([name, hex]) => (
-        <button
-          key={name}
-          title={name}
-          onClick={() => onChange(name)}
-          style={{ width: 18, height: 18, borderRadius: 3, background: hex, border: value === name ? "2px solid #E87A2E" : hex === "#000000" || hex === "#1A1A1A" ? "1px solid #555" : "1px solid #333", cursor: "pointer", padding: 0 }}
-        />
-      ))}
+      {Object.keys(colors).map((name) => {
+        const hex = colors[name];
+        return (
+          <button
+            key={name}
+            title={name}
+            onClick={() => onChange(name)}
+            style={{ width: 18, height: 18, borderRadius: 3, background: cssBackground(name), border: value === name ? `2px solid ${accent}` : hex === "#000000" || hex === "#1A1A1A" ? "1px solid #555" : "1px solid #333", cursor: "pointer", padding: 0 }}
+          />
+        );
+      })}
     </div>
   );
 }
