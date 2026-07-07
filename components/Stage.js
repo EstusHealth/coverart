@@ -101,10 +101,12 @@ export default function Stage({
     if (!canvas) return;
     const backingCap = Math.min(1, MAX_BACKING / Math.max(cssW * dpr, cssH * dpr));
     const bw = Math.max(1, Math.round(cssW * dpr * backingCap));
-    const bh = Math.max(1, Math.round(cssH * dpr * backingCap));
+    const renderScale = bw / docW;
+    // Derive height from the width-based scale so the painted area matches
+    // the backing store instead of rounding each axis independently.
+    const bh = Math.max(1, Math.round(docH * renderScale));
     if (canvas.width !== bw) canvas.width = bw;
     if (canvas.height !== bh) canvas.height = bh;
-    const renderScale = bw / docW;
     const ctx = canvas.getContext("2d");
     renderDesign(ctx, doc, {
       scale: renderScale,
@@ -306,7 +308,7 @@ export default function Stage({
         let newW = size0.w;
         let newH = size0.h;
         if (uniform) {
-          const s = Math.max(MIN_LAYER_SIZE / Math.max(size0.w, size0.h), Math.max(Math.abs(L.x) / size0.w, Math.abs(L.y) / size0.h));
+          const s = Math.max(MIN_LAYER_SIZE / Math.min(size0.w, size0.h), Math.max(Math.abs(L.x) / size0.w, Math.abs(L.y) / size0.h));
           newW = size0.w * s;
           newH = size0.h * s;
         } else {

@@ -549,7 +549,9 @@ export default function EstusSocialCreator() {
     const loaded = await loadFromGallery(id);
     if (!loaded) return;
     const entry = gallery.find((g) => g.id === id);
-    await saveToGallery(newId(), `${entry?.name || "Untitled"} copy`, loaded, renderThumbnail(loaded));
+    // Same content, same thumbnail — re-rendering here would race image
+    // decode and font loading and bake a placeholder thumbnail.
+    await saveToGallery(newId(), `${entry?.name || "Untitled"} copy`, loaded, entry?.thumbnail || renderThumbnail(loaded));
     refreshGallery();
   }, [gallery, refreshGallery]);
 
