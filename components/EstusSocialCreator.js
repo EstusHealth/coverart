@@ -149,6 +149,9 @@ export default function EstusSocialCreator() {
       const idx = prev.layers.findIndex((l) => l.id === id);
       if (idx < 0) return prev;
       const old = prev.layers[idx];
+      // No-op edits (re-clicking the active swatch, same slider value) must
+      // not push history entries or clear the redo stack.
+      if (Object.keys(updates).every((k) => old[k] === updates[k])) return prev;
       let next = { ...old, ...updates };
       if (updates.stack === null) delete next.stack;
       const metricChanged = old.type === "text" && TEXT_METRIC_FIELDS.some((f) => f in updates);
@@ -169,7 +172,7 @@ export default function EstusSocialCreator() {
       let changed = false;
       const layers = prev.layers.map((l) => {
         const u = map.get(l.id);
-        if (!u) return l;
+        if (!u || Object.keys(u).every((k) => l[k] === u[k])) return l;
         changed = true;
         const next = { ...l, ...u };
         if (u.stack === null) delete next.stack;
@@ -267,6 +270,7 @@ export default function EstusSocialCreator() {
     const ids = effSelectedRef.current;
     setDoc((prev) => {
       const { w: W, h: H } = prev.canvas;
+      let changed = false;
       const layers = prev.layers.map((l) => {
         if (!ids.includes(l.id) || l.locked) return l;
         const bb = layerAABB(l);
@@ -278,9 +282,11 @@ export default function EstusSocialCreator() {
         else if (type === "top") dy = ALIGN_MARGIN - bb.minY;
         else if (type === "centerV") dy = H / 2 - (bb.minY + bb.maxY) / 2;
         else if (type === "bottom") dy = H - ALIGN_MARGIN - bb.maxY;
-        return dx || dy ? { ...l, x: l.x + dx, y: l.y + dy } : l;
+        if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return l;
+        changed = true;
+        return { ...l, x: l.x + dx, y: l.y + dy };
       });
-      return { ...prev, layers };
+      return changed ? { ...prev, layers } : prev;
     });
   }, [setDoc]);
 
@@ -289,7 +295,8 @@ export default function EstusSocialCreator() {
   }, [setDoc]);
 
   const toggleVisible = useCallback((id) => {
-    setDoc((prev) => ({ ...prev, layers: prev.layers.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)) }));
+    // Missing `visible` means visible, so toggle relative to that default.
+    setDoc((prev) => ({ ...prev, layers: prev.layers.map((l) => (l.id === id ? { ...l, visible: l.visible === false } : l)) }));
   }, [setDoc]);
 
   const renameLayer = useCallback((id, name) => {
@@ -332,6 +339,7 @@ export default function EstusSocialCreator() {
     setDoc((prev) => {
       const size = CANVAS_SIZES[name];
       if (!size) return prev;
+      if (prev.canvas.preset === name && prev.canvas.w === size.w && prev.canvas.h === size.h) return prev;
       if (prev.canvas.w === size.w && prev.canvas.h === size.h) return { ...prev, canvas: { ...prev.canvas, preset: name } };
       const canvas = { ...prev.canvas, preset: name, w: size.w, h: size.h };
       return { ...prev, canvas, layers: adaptLayersToSize(prev.layers, prev.canvas, canvas) };
@@ -567,9 +575,16 @@ export default function EstusSocialCreator() {
   useEffect(() => {
     if (!ready || !doc) return;
     clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      if (!isTransient()) saveAutosave(doc, designMetaRef.current);
-    }, 800);
+    const attempt = () => {
+      // Mid-gesture: retry after the gesture ends rather than skipping the
+      // save (the gesture may end without another doc change to re-arm us).
+      if (isTransient()) {
+        saveTimerRef.current = setTimeout(attempt, 800);
+        return;
+      }
+      saveAutosave(docRef.current, designMetaRef.current);
+    };
+    saveTimerRef.current = setTimeout(attempt, 800);
     return () => clearTimeout(saveTimerRef.current);
   }, [doc, ready, designMeta, isTransient]);
 
@@ -652,11 +667,16 @@ export default function EstusSocialCreator() {
     const onKeyUp = (e) => {
       if (e.key.startsWith("Arrow") && !isTypingTarget()) endTransient();
     };
+    // A lost keyup (window blurred mid-hold) must not strand the nudge
+    // transient — commit it when focus leaves.
+    const onBlur = () => endTransient();
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
     };
   }, [undo, redo, duplicateLayers, deleteLayers, setDoc, docRef, beginTransient, endTransient, updateLayersBulkOpts]);
 

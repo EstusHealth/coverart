@@ -60,7 +60,7 @@ export default function LayersPanel({
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
-                color: l.visible ? "#ccc" : "#666",
+                color: l.visible !== false ? "#ccc" : "#666",
                 opacity: dragId === l.id ? 0.4 : 1,
               }}
             >
@@ -78,8 +78,8 @@ export default function LayersPanel({
                   ⚠
                 </MiniBtn>
               )}
-              <MiniBtn title={l.visible ? "Hide" : "Show"} onClick={(e) => { e.stopPropagation(); onToggleVisible(l.id); }} active={false}>
-                {l.visible ? "👁" : "–"}
+              <MiniBtn title={l.visible !== false ? "Hide" : "Show"} onClick={(e) => { e.stopPropagation(); onToggleVisible(l.id); }} active={false}>
+                {l.visible !== false ? "👁" : "–"}
               </MiniBtn>
               <MiniBtn title={l.locked ? "Unlock" : "Lock"} onClick={(e) => { e.stopPropagation(); onToggleLock(l.id); }} active={l.locked}>
                 {l.locked ? "🔒" : "🔓"}

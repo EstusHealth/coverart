@@ -40,7 +40,6 @@ export default function Stage({
   updateLayersBulk,
   beginTransient,
   endTransient,
-  retidyAfterChange,
   onDuplicate,
   onDelete,
   onToggleLock,
@@ -143,7 +142,7 @@ export default function Stage({
     const xLines = [0, docW / 2, docW];
     const yLines = [0, docH / 2, docH];
     doc.layers.forEach((l) => {
-      if (draggedIds.includes(l.id) || !l.visible) return;
+      if (draggedIds.includes(l.id) || l.visible === false) return;
       const bb = layerAABB(l);
       xLines.push(bb.minX, (bb.minX + bb.maxX) / 2, bb.maxX);
       yLines.push(bb.minY, (bb.minY + bb.maxY) / 2, bb.maxY);
@@ -177,9 +176,24 @@ export default function Stage({
     setGuides(null);
     setDragging(false);
     if (!session) return;
-    if (session.moved && retidyAfterChange) retidyAfterChange(session.layers.map((l) => l.id));
     endTransient();
-  }, [endTransient, retidyAfterChange]);
+  }, [endTransient]);
+
+  // Safety net: if the captured element unmounts mid-drag (layer deleted or
+  // undone away), its pointerup never fires — catch it at the window level so
+  // the transient edit always gets committed or abandoned.
+  useEffect(() => {
+    if (!dragging) return;
+    const up = () => endDrag();
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    window.addEventListener("blur", up);
+    return () => {
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      window.removeEventListener("blur", up);
+    };
+  }, [dragging, endDrag]);
 
   const startSession = useCallback((e, session) => {
     e.stopPropagation();
@@ -369,11 +383,10 @@ export default function Stage({
   const commitEditing = useCallback(() => {
     if (editSessionRef.current) {
       editSessionRef.current = false;
-      if (retidyAfterChange && editingId) retidyAfterChange([editingId]);
       endTransient();
     }
     onEditingChange(null);
-  }, [endTransient, retidyAfterChange, editingId, onEditingChange]);
+  }, [endTransient, onEditingChange]);
 
   /* ------------------------------- chrome ------------------------------- */
 
