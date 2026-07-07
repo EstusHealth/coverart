@@ -1,483 +1,749 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  BRANDS,
+  BRAND_REMAP,
+  BLOCK_PRESETS,
+  PRESET_PLACEHOLDER,
+  CANVAS_SIZES,
+  remapColor,
+} from "../lib/constants";
+import {
+  loadFontsForLayers,
+  notifyFontsChanged,
+  exportDesign,
+  renderThumbnail,
+  importImageFile,
+  layerAABB,
+} from "../lib/render";
+import {
+  newId,
+  makeTextLayer,
+  makeImageLayer,
+  makeShapeLayer,
+  makeBackgroundLayers,
+  instantiateTemplate,
+  templateFontProbes,
+  createDefaultDoc,
+  adaptLayersToSize,
+  retidyStack,
+  retidyAllStacks,
+  preserveAnchorX,
+  TEXT_METRIC_FIELDS,
+} from "../lib/templates";
+import { useHistory } from "../lib/history";
+import {
+  saveAutosave,
+  loadAutosave,
+  saveToGallery,
+  listGallery,
+  loadFromGallery,
+  deleteFromGallery,
+  kvGet,
+  kvSet,
+  downloadDesignFile,
+  parseDesignFile,
+} from "../lib/storage";
+import Stage from "./Stage";
+import Sidebar from "./panels/Sidebar";
+import LayersPanel from "./panels/LayersPanel";
+import Inspector from "./panels/Inspector";
 
-const BRANDS = {
-  "Estus": {
-    accent: "#E87A2E",
-    defaultBg: "Off-Black",
-    colors: {
-      "White": "#FFFFFF",
-      "Estus Orange": "#E87A2E",
-      "Noctua Brown": "#8B5A3C",
-      "Light Grey": "#9CA3AF",
-      "Mid Grey": "#6B7280",
-      "Dark Grey": "#374151",
-      "Off-Black": "#1A1A1A",
-      "Pure Black": "#000000",
-      "Cream": "#E8DDD0",
-    },
-    overlays: {
-      "Black": "#000000",
-      "Off-Black": "#1A1A1A",
-      "Noctua Brown": "#8B5A3C",
-      "Estus Orange": "#E87A2E",
-    },
-  },
-  "Health": {
-    accent: "#2AA2B4",
-    defaultBg: "White",
-    colors: {
-      "White": "#FFFFFF",
-      "Primary Navy": "#30487E",
-      "Deep Navy": "#1E305A",
-      "Teal": "#2AA2B4",
-      "Magenta": "#A85A90",
-      "Gradient Blue": "#629FB8",
-      "Gradient Violet": "#686495",
-      "Gradient Purple": "#6F528B",
-      "Health Gradient": { gradient: ["#629FB8", "#686495", "#6F528B"] },
-    },
-    overlays: {
-      "Black": "#000000",
-      "Deep Navy": "#1E305A",
-      "Primary Navy": "#30487E",
-      "Teal": "#2AA2B4",
-    },
-  },
-};
-const ALL_COLORS = { ...BRANDS["Estus"].colors, ...BRANDS["Health"].colors };
-const ALL_OVERLAYS = { ...BRANDS["Estus"].overlays, ...BRANDS["Health"].overlays };
-// Colour-name translations INTO each brand, applied when switching brand and
-// when instantiating the (Estus-named) presets/templates under another brand.
-const BRAND_REMAP = {
-  "Health": {
-    text: { "White": "Primary Navy", "Estus Orange": "Teal", "Noctua Brown": "Primary Navy", "Light Grey": "Deep Navy", "Mid Grey": "Deep Navy", "Dark Grey": "Deep Navy", "Off-Black": "Deep Navy", "Pure Black": "Deep Navy", "Cream": "Magenta" },
-    bg: { "Off-Black": "White", "Pure Black": "Deep Navy", "Cream": "White", "Light Grey": "White", "Mid Grey": "Deep Navy", "Dark Grey": "Deep Navy", "Estus Orange": "Teal", "Noctua Brown": "Primary Navy" },
-    overlay: { "Off-Black": "Deep Navy", "Noctua Brown": "Primary Navy", "Estus Orange": "Teal" },
-  },
-  "Estus": {
-    text: { "Primary Navy": "White", "Deep Navy": "Light Grey", "Teal": "Estus Orange", "Magenta": "Cream", "Gradient Blue": "Light Grey", "Gradient Violet": "Mid Grey", "Gradient Purple": "Noctua Brown", "Health Gradient": "Estus Orange" },
-    bg: { "White": "Off-Black", "Deep Navy": "Off-Black", "Primary Navy": "Off-Black", "Teal": "Estus Orange", "Magenta": "Noctua Brown", "Gradient Blue": "Off-Black", "Gradient Violet": "Off-Black", "Gradient Purple": "Off-Black", "Health Gradient": "Off-Black" },
-    overlay: { "Deep Navy": "Off-Black", "Primary Navy": "Noctua Brown", "Teal": "Estus Orange" },
-  },
-};
-// Colour values are either a hex string or { gradient: [stops] }
-const colorValue = (name) => ALL_COLORS[name] || "#FFFFFF";
-const isGradient = (name) => typeof colorValue(name) === "object";
-const solidColor = (name) => {
-  const v = colorValue(name);
-  return typeof v === "string" ? v : v.gradient[Math.floor(v.gradient.length / 2)];
-};
-const cssBackground = (name, angle = 90) => {
-  const v = colorValue(name);
-  return typeof v === "string" ? v : `linear-gradient(${angle}deg, ${v.gradient.join(", ")})`;
-};
-const canvasFill = (ctx, name, x0, y0, x1, y1) => {
-  const v = colorValue(name);
-  if (typeof v === "string") return v;
-  const g = ctx.createLinearGradient(x0, y0, Math.max(x1, x0 + 1), y1);
-  v.gradient.forEach((c, i) => g.addColorStop(i / (v.gradient.length - 1), c));
-  return g;
-};
-const FONTS = {
-  "Oswald": "'Oswald', sans-serif",
-  "Libre Baskerville": "'Libre Baskerville', serif",
-  "Inter": "'Inter', sans-serif",
-};
-const CANVAS_SIZES = {
-  "IG Square (1080x1080)": { w: 1080, h: 1080 },
-  "IG Story (1080x1920)": { w: 1080, h: 1920 },
-  "LinkedIn (1200x627)": { w: 1200, h: 627 },
-  "X/Twitter (1200x675)": { w: 1200, h: 675 },
-  "Facebook (1200x630)": { w: 1200, h: 630 },
-  "YouTube Thumb (1280x720)": { w: 1280, h: 720 },
-};
-const STRIKE_STYLES = ["straight", "double", "diagonal", "wavy", "scribble", "marker"];
-const BLOCK_PRESETS = {
-  "Eyebrow": { font: "Oswald", size: 18, weight: 400, color: "Light Grey", letterSpacing: 8, uppercase: true, italic: false, align: "center", lineHeight: 1.2, strikethrough: false, strikeStyle: "straight" },
-  "Hero Bold": { font: "Oswald", size: 96, weight: 700, color: "White", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 0.95, strikethrough: false, strikeStyle: "straight" },
-  "Hero Accent": { font: "Oswald", size: 96, weight: 700, color: "Estus Orange", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 0.95, strikethrough: false, strikeStyle: "straight" },
-  "Serif Subtitle": { font: "Libre Baskerville", size: 36, weight: 400, color: "Cream", letterSpacing: 0, uppercase: false, italic: true, align: "center", lineHeight: 1.3, strikethrough: false, strikeStyle: "straight" },
-  "Body": { font: "Inter", size: 24, weight: 400, color: "Light Grey", letterSpacing: 0, uppercase: false, italic: false, align: "center", lineHeight: 1.5, strikethrough: false, strikeStyle: "straight" },
-  "CTA Label": { font: "Oswald", size: 22, weight: 600, color: "White", letterSpacing: 4, uppercase: true, italic: false, align: "center", lineHeight: 1.2, strikethrough: false, strikeStyle: "straight" },
-  "Checklist Item": { font: "Inter", size: 32, weight: 500, color: "Cream", letterSpacing: 0, uppercase: false, italic: false, align: "left", lineHeight: 1.4, strikethrough: false, strikeStyle: "straight" },
-};
-const defaultBlocks = [
-  { id: "1", text: "OCCUPATIONAL THERAPY", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
-  { id: "2", text: "BEING\nYOURSELF", ...BLOCK_PRESETS["Hero Bold"], marginTop: 24 },
-  { id: "3", text: "ISN'T THE\nPROBLEM.", ...BLOCK_PRESETS["Hero Accent"], marginTop: 0 },
-  { id: "4", text: "It's the starting point.", ...BLOCK_PRESETS["Serif Subtitle"], marginTop: 24 },
-  { id: "5", text: "Neuroaffirming. Evidence-informed.\nEnvironment-focused.", ...BLOCK_PRESETS["Body"], marginTop: 24 },
-];
-let blockIdCounter = 100;
+const ALIGN_MARGIN = 60;
 
 export default function EstusSocialCreator() {
-  const [brand, setBrand] = useState("Estus");
-  const [blocks, setBlocks] = useState(defaultBlocks);
-  const [selectedId, setSelectedId] = useState(null);
-  const [canvasSize, setCanvasSize] = useState("IG Story (1080x1920)");
-  const [bgColor, setBgColor] = useState("Off-Black");
-  const [padding, setPadding] = useState(60);
-  const [verticalAlign, setVerticalAlign] = useState("center");
-  const [exporting, setExporting] = useState(false);
+  const h = useHistory(null);
+  const { doc, docRef, setDoc, beginTransient, endTransient, isTransient, undo, redo, amendDoc, replaceDoc, canUndo, canRedo } = h;
+
+  const [ready, setReady] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [editingId, setEditingId] = useState(null);
   const [showSidebar, setShowSidebar] = useState(true);
-  const [bgImage, setBgImage] = useState(null);
-  const [bgImageObj, setBgImageObj] = useState(null);
-  const [bgFit, setBgFit] = useState("cover");
-  const [bgPositionX, setBgPositionX] = useState(50);
-  const [bgPositionY, setBgPositionY] = useState(50);
-  const [overlayColor, setOverlayColor] = useState("Black");
-  const [overlayOpacity, setOverlayOpacity] = useState(0.55);
-  const [bgBlur, setBgBlur] = useState(0);
+  const [showSafeZone, setShowSafeZone] = useState(false);
+  const [repaintTick, setRepaintTick] = useState(0);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportOpts, setExportOpts] = useState({ format: "png", scale: 1, transparent: false });
+  const [exporting, setExporting] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [gallery, setGallery] = useState([]);
+  const [designMeta, setDesignMeta] = useState({ id: null, name: "Untitled" });
+  const [hasLogo, setHasLogo] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [narrow, setNarrow] = useState(false);
+
+  const clipboardRef = useRef(null);
   const fileInputRef = useRef(null);
-  const size = CANVAS_SIZES[canvasSize];
-  const scale = Math.min(380 / size.w, 680 / size.h);
-  const selected = blocks.find((b) => b.id === selectedId);
+  const filePurposeRef = useRef({ kind: "image" });
+  const designMetaRef = useRef(designMeta);
+  designMetaRef.current = designMeta;
 
-  const handleImageUpload = useCallback((e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target.result;
-      setBgImage(dataUrl);
-      const img = new Image();
-      img.onload = () => setBgImageObj(img);
-      img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
-    e.target.value = "";
-  }, []);
+  const brand = doc?.brand || "Estus";
+  const accent = BRANDS[brand].accent;
 
-  const clearImage = useCallback(() => {
-    setBgImage(null);
-    setBgImageObj(null);
-  }, []);
-
-  const updateBlock = useCallback((id, updates) => {
-    setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...updates } : b)));
-  }, []);
-
-  // Presets/templates are written with Estus colour names; translate into the active brand
-  const presetColor = useCallback((color) => BRAND_REMAP[brand].text[color] || color, [brand]);
-
-  const switchBrand = useCallback((next) => {
-    if (next === brand) return;
-    const map = BRAND_REMAP[next];
-    setBlocks((prev) => prev.map((b) => ({ ...b, color: map.text[b.color] || b.color })));
-    setBgColor((c) => map.bg[c] || (BRANDS[next].colors[c] ? c : BRANDS[next].defaultBg));
-    setOverlayColor((c) => map.overlay[c] || (BRANDS[next].overlays[c] ? c : "Black"));
-    setBrand(next);
-  }, [brand]);
-
-  const addBlock = useCallback((presetName) => {
-    const preset = BLOCK_PRESETS[presetName];
-    const newBlock = {
-      id: String(++blockIdCounter),
-      text:
-        presetName === "Eyebrow" ? "LABEL" :
-        presetName === "Hero Bold" ? "HEADLINE" :
-        presetName === "Hero Accent" ? "ACCENT" :
-        presetName === "Serif Subtitle" ? "Subtitle here." :
-        presetName === "CTA Label" ? "BUTTON TEXT" :
-        presetName === "Checklist Item" ? "Checklist item." :
-        "Body text here.",
-      ...preset,
-      color: presetColor(preset.color),
-      marginTop: 16,
-    };
-    setBlocks((prev) => [...prev, newBlock]);
-    setSelectedId(newBlock.id);
-  }, [presetColor]);
-
-  const removeBlock = useCallback((id) => {
-    setBlocks((prev) => prev.filter((b) => b.id !== id));
-    if (selectedId === id) setSelectedId(null);
-  }, [selectedId]);
-
-  const moveBlock = useCallback((id, dir) => {
-    setBlocks((prev) => {
-      const idx = prev.findIndex((b) => b.id === id);
-      if ((dir === -1 && idx === 0) || (dir === 1 && idx === prev.length - 1)) return prev;
-      const next = [...prev];
-      [next[idx], next[idx + dir]] = [next[idx + dir], next[idx]];
-      return next;
-    });
-  }, []);
-
-  const duplicateBlock = useCallback((id) => {
-    setBlocks((prev) => {
-      const idx = prev.findIndex((b) => b.id === id);
-      const orig = prev[idx];
-      const dup = { ...orig, id: String(++blockIdCounter) };
-      const next = [...prev];
-      next.splice(idx + 1, 0, dup);
-      return next;
-    });
-  }, []);
-
-  const handleExport = useCallback(async () => {
-    setExporting(true);
-    try {
-      // Ensure all fonts used are loaded before drawing to canvas
-      if (document.fonts) {
-        const fontLoads = blocks.map((b) => {
-          const style = b.italic ? "italic" : "normal";
-          return document.fonts.load(`${style} ${b.weight} ${b.size}px ${FONTS[b.font]}`);
-        });
-        await Promise.all(fontLoads);
-        await document.fonts.ready;
-      }
-
-      const canvas = document.createElement("canvas");
-      canvas.width = size.w;
-      canvas.height = size.h;
-      const ctx = canvas.getContext("2d");
-
-      // Background colour
-      ctx.fillStyle = canvasFill(ctx, bgColor, 0, 0, size.w, size.h);
-      ctx.fillRect(0, 0, size.w, size.h);
-
-      // Background image + overlay
-      if (bgImageObj) {
-        ctx.save();
-        if (bgBlur > 0) {
-          ctx.filter = `blur(${bgBlur}px)`;
-          drawImageFit(ctx, bgImageObj, size.w, size.h, bgFit, bgPositionX, bgPositionY, bgBlur * 3);
-          ctx.filter = "none";
-        } else {
-          drawImageFit(ctx, bgImageObj, size.w, size.h, bgFit, bgPositionX, bgPositionY, 0);
-        }
-        ctx.restore();
-        if (overlayOpacity > 0) {
-          ctx.save();
-          ctx.globalAlpha = overlayOpacity;
-          ctx.fillStyle = ALL_OVERLAYS[overlayColor] || "#000000";
-          ctx.fillRect(0, 0, size.w, size.h);
-          ctx.restore();
-        }
-      }
-
-      // letter-spacing in CSS is: block.letterSpacing * (block.size / 18) px per character gap
-      // (same formula as preview, just at scale 1)
-      const letterSpacingPx = (block) => block.letterSpacing * (block.size / 18);
-
-      // Measure the true rendered width of a line including letter-spacing
-      const measureLineWidth = (line, spacingPx) => {
-        if (!line) return 0;
-        if (spacingPx === 0) return ctx.measureText(line).width;
-        let w = 0;
-        for (const ch of line) w += ctx.measureText(ch).width;
-        // CSS letter-spacing adds spacing after each character (n chars → n gaps)
-        w += spacingPx * line.length;
-        return w;
-      };
-
-      // Pre-measure all blocks so we can compute total height for vertical alignment
-      const measured = blocks.map((block) => {
-        const text = block.uppercase ? block.text.toUpperCase() : block.text;
-        const lines = text.split("\n");
-        const lh = block.size * block.lineHeight;
-        const blockH = lines.length * lh;
-        const spacingPx = letterSpacingPx(block);
-        return { ...block, lines, lh, blockH, spacingPx };
-      });
-
-      const totalHeight = measured.reduce((sum, b) => sum + b.marginTop + b.blockH, 0);
-
-      let y;
-      if (verticalAlign === "top") y = padding;
-      else if (verticalAlign === "bottom") y = size.h - padding - totalHeight;
-      else y = (size.h - totalHeight) / 2;
-
-      ctx.textBaseline = "top";
-
-      measured.forEach((block) => {
-        y += block.marginTop;
-
-        const fontStyle = block.italic ? "italic" : "normal";
-        const fontStr = `${fontStyle} ${block.weight} ${block.size}px ${FONTS[block.font]}`;
-        ctx.font = fontStr;
-
-        // CSS line-height centres the glyph in the line box with equal space above/below.
-        // textBaseline "top" draws from the top of the em square, so we offset by half-leading
-        // to match the visual position in the browser preview.
-        const halfLeading = block.size * (block.lineHeight - 1) / 2;
-
-        block.lines.forEach((line) => {
-          // Re-set font in case any previous draw mutated ctx state
-          ctx.font = fontStr;
-
-          const lineW = measureLineWidth(line, block.spacingPx);
-
-          let x;
-          if (block.align === "left") x = padding;
-          else if (block.align === "right") x = size.w - padding - lineW;
-          else x = (size.w - lineW) / 2;
-
-          const drawY = y + halfLeading;
-
-          // Gradient fills span the rendered line, so set fill per line
-          ctx.fillStyle = canvasFill(ctx, block.color, x, 0, x + lineW, 0);
-
-          if (block.spacingPx !== 0) {
-            let cx = x;
-            for (const char of line) {
-              ctx.fillText(char, cx, drawY);
-              cx += ctx.measureText(char).width + block.spacingPx;
-            }
-          } else {
-            ctx.fillText(line, x, drawY);
-          }
-
-          if (block.strikethrough && line) {
-            drawStrike(ctx, block.strikeStyle, x, drawY, lineW, block.size, solidColor(block.color));
-          }
-
-          y += block.lh;
-        });
-      });
-
-      const link = document.createElement("a");
-      link.download = `${brand === "Health" ? "estus-health" : "estus"}-social-${Date.now()}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    } catch (e) {
-      console.error("Export error:", e);
-    }
-    setExporting(false);
-  }, [blocks, size, bgColor, bgImageObj, bgFit, bgPositionX, bgPositionY, bgBlur, overlayColor, overlayOpacity, padding, verticalAlign, brand]);
-
-  const applyTemplate = useCallback((name) => {
-    const setBrandBlocks = (arr) => setBlocks(arr.map((b) => ({ ...b, color: presetColor(b.color) })));
-    if (name === "hero-statement") {
-      setBrandBlocks([
-        { id: String(++blockIdCounter), text: "OCCUPATIONAL THERAPY", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
-        { id: String(++blockIdCounter), text: "BEING\nYOURSELF", ...BLOCK_PRESETS["Hero Bold"], marginTop: 24 },
-        { id: String(++blockIdCounter), text: "ISN'T THE\nPROBLEM.", ...BLOCK_PRESETS["Hero Accent"], marginTop: 0 },
-        { id: String(++blockIdCounter), text: "It's the starting point.", ...BLOCK_PRESETS["Serif Subtitle"], marginTop: 24 },
-        { id: String(++blockIdCounter), text: "Neuroaffirming. Evidence-informed.\nEnvironment-focused.", ...BLOCK_PRESETS["Body"], marginTop: 24 },
-      ]);
-    } else if (name === "quote-card") {
-      setBrandBlocks([
-        { id: String(++blockIdCounter), text: "ESTUS HEALTH", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
-        { id: String(++blockIdCounter), text: "Your brain isn't broken.\nThe system wasn't\nbuilt for you.", ...BLOCK_PRESETS["Serif Subtitle"], size: 44, marginTop: 40 },
-        { id: String(++blockIdCounter), text: "www.estushealth.com", ...BLOCK_PRESETS["Body"], size: 18, color: "Mid Grey", marginTop: 48 },
-      ]);
-    } else if (name === "protocol-tip") {
-      setBrandBlocks([
-        { id: String(++blockIdCounter), text: "PERFORMANCE LAB: PROTOCOLS", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
-        { id: String(++blockIdCounter), text: "PROTOCOL #12", ...BLOCK_PRESETS["Hero Bold"], size: 64, marginTop: 24 },
-        { id: String(++blockIdCounter), text: "THE 2-MINUTE\nRULE", ...BLOCK_PRESETS["Hero Accent"], size: 72, marginTop: 0 },
-        { id: String(++blockIdCounter), text: "If it takes less than 2 minutes,\ndo it now. Don't add it to the list.", ...BLOCK_PRESETS["Body"], size: 22, color: "Cream", marginTop: 32 },
-        { id: String(++blockIdCounter), text: "performancelab@estushealth.com", ...BLOCK_PRESETS["Body"], size: 16, color: "Mid Grey", marginTop: 40 },
-      ]);
-    } else if (name === "stat-callout") {
-      setBrandBlocks([
-        { id: String(++blockIdCounter), text: "DID YOU KNOW?", ...BLOCK_PRESETS["Eyebrow"], color: "Estus Orange", marginTop: 0 },
-        { id: String(++blockIdCounter), text: "70%", ...BLOCK_PRESETS["Hero Bold"], size: 160, color: "White", marginTop: 16 },
-        { id: String(++blockIdCounter), text: "of late-diagnosed autistic adults\nreport burnout as their\nprimary presentation.", ...BLOCK_PRESETS["Body"], size: 26, color: "Cream", marginTop: 8 },
-        { id: String(++blockIdCounter), text: "ESTUS HEALTH", ...BLOCK_PRESETS["Eyebrow"], marginTop: 48 },
-      ]);
-    } else if (name === "therapy-goals") {
-      setBrandBlocks([
-        { id: String(++blockIdCounter), text: "OCCUPATIONAL THERAPY", ...BLOCK_PRESETS["Eyebrow"], align: "left", marginTop: 0 },
-        { id: String(++blockIdCounter), text: "WHAT IS YOUR\nNEXT THERAPY\nGOAL?", ...BLOCK_PRESETS["Hero Bold"], size: 72, align: "left", marginTop: 20 },
-        { id: String(++blockIdCounter), text: "Set a regular sleep schedule", ...BLOCK_PRESETS["Checklist Item"], marginTop: 36, strikethrough: true, strikeStyle: "straight" },
-        { id: String(++blockIdCounter), text: "Build a sensory toolkit", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12, strikethrough: true, strikeStyle: "wavy" },
-        { id: String(++blockIdCounter), text: "Practice unmasking with safe people", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
-        { id: String(++blockIdCounter), text: "Identify burnout triggers", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
-        { id: String(++blockIdCounter), text: "Plan recovery time after socialising", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
-        { id: String(++blockIdCounter), text: "Ask for accommodations at work", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
-        { id: String(++blockIdCounter), text: "Schedule a self-care ritual weekly", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
-      ]);
-    }
-    setSelectedId(null);
-  }, [presetColor]);
+  /* ------------------------------ initial load ----------------------------- */
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") setSelectedId(null); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    let cancelled = false;
+    (async () => {
+      kvGet("logo").then((l) => !cancelled && setHasLogo(!!l));
+      const saved = await loadAutosave();
+      if (cancelled) return;
+      if (saved) {
+        await loadFontsForLayers(saved.doc.layers);
+        notifyFontsChanged();
+        if (cancelled) return;
+        replaceDoc(saved.doc);
+        if (saved.meta && (saved.meta.id || saved.meta.name)) setDesignMeta({ id: saved.meta.id || null, name: saved.meta.name || "Untitled" });
+      } else {
+        await loadFontsForLayers(templateFontProbes("hero-statement"));
+        notifyFontsChanged();
+        if (cancelled) return;
+        replaceDoc(createDefaultDoc());
+      }
+      setReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [replaceDoc]);
+
+  // Late webfont loads change text metrics: re-measure, re-tidy, repaint —
+  // without touching undo history.
+  useEffect(() => {
+    if (typeof document === "undefined" || !document.fonts) return;
+    const onDone = () => {
+      notifyFontsChanged();
+      amendDoc((prev) => {
+        const layers = retidyAllStacks(prev.layers);
+        return layers === prev.layers ? prev : { ...prev, layers };
+      });
+      setRepaintTick((t) => t + 1);
+    };
+    document.fonts.addEventListener("loadingdone", onDone);
+    return () => document.fonts.removeEventListener("loadingdone", onDone);
+  }, [amendDoc]);
+
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < 768);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const renderPreviewBlock = (block) => {
-    const text = block.uppercase ? block.text.toUpperCase() : block.text;
-    const lines = text.split("\n");
+  /* ------------------------------- selection ------------------------------- */
+
+  const effSelected = useMemo(
+    () => (doc ? selectedIds.filter((id) => doc.layers.some((l) => l.id === id)) : []),
+    [selectedIds, doc]
+  );
+  const effSelectedRef = useRef(effSelected);
+  effSelectedRef.current = effSelected;
+
+  useEffect(() => {
+    if (editingId && doc && !doc.layers.some((l) => l.id === editingId)) setEditingId(null);
+  }, [editingId, doc]);
+
+  /* ----------------------------- layer editing ----------------------------- */
+
+  const updateLayer = useCallback((id, updates, opts) => {
+    setDoc((prev) => {
+      const idx = prev.layers.findIndex((l) => l.id === id);
+      if (idx < 0) return prev;
+      const old = prev.layers[idx];
+      let next = { ...old, ...updates };
+      if (updates.stack === null) delete next.stack;
+      const metricChanged = old.type === "text" && TEXT_METRIC_FIELDS.some((f) => f in updates);
+      // Callers that pass explicit x/y (Stage resize) already anchored the
+      // geometry themselves — don't anchor-correct on top of them.
+      if (metricChanged && !("x" in updates) && !("y" in updates)) next = preserveAnchorX(old, next);
+      let layers = prev.layers.slice();
+      layers[idx] = next;
+      if (metricChanged && next.stack) layers = retidyStack(layers, next.stack.id);
+      return { ...prev, layers };
+    }, opts);
+  }, [setDoc]);
+
+  // Bulk updates from Stage drags must honour the transient flag.
+  const updateLayersBulkOpts = useCallback((entries, opts) => {
+    setDoc((prev) => {
+      const map = new Map(entries.map((e) => [e.id, e.updates]));
+      let changed = false;
+      const layers = prev.layers.map((l) => {
+        const u = map.get(l.id);
+        if (!u) return l;
+        changed = true;
+        const next = { ...l, ...u };
+        if (u.stack === null) delete next.stack;
+        return next;
+      });
+      return changed ? { ...prev, layers } : prev;
+    }, opts);
+  }, [setDoc]);
+
+  const updateSelected = useCallback((updates, opts) => {
+    updateLayersBulkOpts(effSelectedRef.current.map((id) => ({ id, updates })), opts);
+  }, [updateLayersBulkOpts]);
+
+  const deleteLayers = useCallback((ids) => {
+    if (!ids.length) return;
+    setDoc((prev) => {
+      const removed = prev.layers.filter((l) => ids.includes(l.id));
+      if (!removed.length) return prev;
+      let layers = prev.layers.filter((l) => !ids.includes(l.id));
+      const stackIds = [...new Set(removed.filter((l) => l.stack).map((l) => l.stack.id))];
+      layers = stackIds.reduce((acc, sid) => retidyStack(acc, sid), layers);
+      return { ...prev, layers };
+    });
+    setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
+  }, [setDoc]);
+
+  // Duplicates of stacked layers stay in the stack (inserted right below the
+  // original — the checklist workflow); free layers cascade +16px.
+  const duplicateLayers = useCallback((ids) => {
+    if (!ids.length) return;
+    const newIds = [];
+    setDoc((prev) => {
+      let layers = prev.layers.slice();
+      const stacksTouched = new Set();
+      ids.forEach((id) => {
+        const idx = layers.findIndex((l) => l.id === id);
+        if (idx < 0) return;
+        const orig = layers[idx];
+        const dup = { ...orig, id: newId(), locked: false };
+        if (orig.stack) {
+          dup.stack = { ...orig.stack, index: orig.stack.index + 0.5 };
+          stacksTouched.add(orig.stack.id);
+        } else {
+          dup.x += 16;
+          dup.y += 16;
+        }
+        layers.splice(idx + 1, 0, dup);
+        newIds.push(dup.id);
+      });
+      stacksTouched.forEach((sid) => {
+        const members = layers.filter((l) => l.stack && l.stack.id === sid).sort((a, b) => a.stack.index - b.stack.index);
+        members.forEach((m, i) => {
+          const j = layers.indexOf(m);
+          layers[j] = { ...m, stack: { ...m.stack, index: i } };
+        });
+        layers = retidyStack(layers, sid);
+      });
+      return { ...prev, layers };
+    });
+    if (newIds.length) setSelectedIds(newIds);
+  }, [setDoc]);
+
+  const moveZ = useCallback((id, dir) => {
+    setDoc((prev) => {
+      const idx = prev.layers.findIndex((l) => l.id === id);
+      const ni = idx + dir;
+      if (idx < 0 || ni < 0 || ni >= prev.layers.length) return prev;
+      const layers = prev.layers.slice();
+      [layers[idx], layers[ni]] = [layers[ni], layers[idx]];
+      return { ...prev, layers };
+    });
+  }, [setDoc]);
+
+  const reorderTo = useCallback((dragId, targetId) => {
+    setDoc((prev) => {
+      const from = prev.layers.findIndex((l) => l.id === dragId);
+      const ti = prev.layers.findIndex((l) => l.id === targetId);
+      if (from < 0 || ti < 0 || from === ti) return prev;
+      const layers = prev.layers.slice();
+      const [item] = layers.splice(from, 1);
+      const tiAfter = layers.findIndex((l) => l.id === targetId);
+      layers.splice(from > ti ? tiAfter : tiAfter + 1, 0, item);
+      return { ...prev, layers };
+    });
+  }, [setDoc]);
+
+  const recenterLayer = useCallback((id) => {
+    setDoc((prev) => ({
+      ...prev,
+      layers: prev.layers.map((l) => (l.id === id ? { ...l, x: prev.canvas.w / 2, y: prev.canvas.h / 2 } : l)),
+    }));
+  }, [setDoc]);
+
+  const alignSelected = useCallback((type) => {
+    const ids = effSelectedRef.current;
+    setDoc((prev) => {
+      const { w: W, h: H } = prev.canvas;
+      const layers = prev.layers.map((l) => {
+        if (!ids.includes(l.id) || l.locked) return l;
+        const bb = layerAABB(l);
+        let dx = 0;
+        let dy = 0;
+        if (type === "left") dx = ALIGN_MARGIN - bb.minX;
+        else if (type === "centerH") dx = W / 2 - (bb.minX + bb.maxX) / 2;
+        else if (type === "right") dx = W - ALIGN_MARGIN - bb.maxX;
+        else if (type === "top") dy = ALIGN_MARGIN - bb.minY;
+        else if (type === "centerV") dy = H / 2 - (bb.minY + bb.maxY) / 2;
+        else if (type === "bottom") dy = H - ALIGN_MARGIN - bb.maxY;
+        return dx || dy ? { ...l, x: l.x + dx, y: l.y + dy } : l;
+      });
+      return { ...prev, layers };
+    });
+  }, [setDoc]);
+
+  const toggleLock = useCallback((id) => {
+    setDoc((prev) => ({ ...prev, layers: prev.layers.map((l) => (l.id === id ? { ...l, locked: !l.locked } : l)) }));
+  }, [setDoc]);
+
+  const toggleVisible = useCallback((id) => {
+    setDoc((prev) => ({ ...prev, layers: prev.layers.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)) }));
+  }, [setDoc]);
+
+  const renameLayer = useCallback((id, name) => {
+    setDoc((prev) => ({ ...prev, layers: prev.layers.map((l) => (l.id === id ? { ...l, name } : l)) }));
+  }, [setDoc]);
+
+  /* ------------------------------ brand switch ----------------------------- */
+
+  const switchBrand = useCallback((next) => {
+    const d = docRef.current;
+    if (!d || next === d.brand) return;
+    const bgFor = (c) => {
+      if (typeof c === "string" && c.startsWith("#")) return c;
+      const m = BRAND_REMAP[next].bg[c];
+      if (m) return m;
+      return BRANDS[next].colors[c] ? c : BRANDS[next].defaultBg;
+    };
+    setDoc((prev) => ({
+      ...prev,
+      brand: next,
+      canvas: { ...prev.canvas, background: bgFor(prev.canvas.background) },
+      layers: prev.layers.map((l) => {
+        if (l.type === "text") return { ...l, color: remapColor(l.color, next, "text") };
+        if (l.type === "shape") {
+          const fillKind = l.role === "overlay" ? "overlay" : "bg";
+          return {
+            ...l,
+            fill: l.fill && l.fill !== "none" ? remapColor(l.fill, next, fillKind) : l.fill,
+            stroke: l.stroke && l.stroke !== "none" ? remapColor(l.stroke, next, "text") : l.stroke,
+          };
+        }
+        return l;
+      }),
+    }));
+  }, [docRef, setDoc]);
+
+  /* ------------------------------ canvas size ------------------------------ */
+
+  const setCanvasPreset = useCallback((name) => {
+    setDoc((prev) => {
+      const size = CANVAS_SIZES[name];
+      if (!size) return prev;
+      if (prev.canvas.w === size.w && prev.canvas.h === size.h) return { ...prev, canvas: { ...prev.canvas, preset: name } };
+      const canvas = { ...prev.canvas, preset: name, w: size.w, h: size.h };
+      return { ...prev, canvas, layers: adaptLayersToSize(prev.layers, prev.canvas, canvas) };
+    });
+  }, [setDoc]);
+
+  const setCustomSize = useCallback((w, hgt) => {
+    setDoc((prev) => {
+      if (prev.canvas.w === w && prev.canvas.h === hgt) return prev;
+      const canvas = { ...prev.canvas, preset: "Custom", w, h: hgt };
+      return { ...prev, canvas, layers: adaptLayersToSize(prev.layers, prev.canvas, canvas) };
+    });
+  }, [setDoc]);
+
+  /* ------------------------------- templates ------------------------------- */
+
+  const applyTemplate = useCallback(async (key) => {
+    await loadFontsForLayers(templateFontProbes(key));
+    notifyFontsChanged();
+    setDoc((prev) => {
+      const kept = prev.layers.filter((l) => l.locked);
+      return { ...prev, layers: [...kept, ...instantiateTemplate(key, prev.canvas, prev.brand)] };
+    });
+    setSelectedIds([]);
+    setEditingId(null);
+  }, [setDoc]);
+
+  /* ------------------------------- add layers ------------------------------ */
+
+  const addText = useCallback((preset) => {
+    const d = docRef.current;
+    if (!d) return;
+    const p = BLOCK_PRESETS[preset];
+    const layer = makeTextLayer(preset, {
+      text: PRESET_PLACEHOLDER[preset] || "Text",
+      color: remapColor(p.color, d.brand, "text"),
+      x: d.canvas.w / 2,
+      y: d.canvas.h / 2,
+    });
+    setDoc((prev) => ({ ...prev, layers: [...prev.layers, layer] }));
+    setSelectedIds([layer.id]);
+  }, [docRef, setDoc]);
+
+  const addShape = useCallback((shape) => {
+    const d = docRef.current;
+    if (!d) return;
+    const W = d.canvas.w;
+    const base = {
+      rect: { w: W * 0.4, h: W * 0.25 },
+      ellipse: { w: W * 0.3, h: W * 0.3 },
+      pill: { w: W * 0.4, h: W * 0.12 },
+      line: { w: W * 0.5, h: 6 },
+    }[shape] || { w: W * 0.4, h: W * 0.25 };
+    const layer = makeShapeLayer({
+      shape,
+      ...base,
+      x: d.canvas.w / 2,
+      y: d.canvas.h / 2,
+      fill: remapColor("Estus Orange", d.brand, "bg"),
+    });
+    setDoc((prev) => ({ ...prev, layers: [...prev.layers, layer] }));
+    setSelectedIds([layer.id]);
+  }, [docRef, setDoc]);
+
+  const insertLogo = useCallback((logo) => {
+    const d = docRef.current;
+    if (!d || !logo) return;
+    const targetW = Math.min(d.canvas.w * 0.16, logo.w);
+    const s = targetW / logo.w;
+    const layer = makeImageLayer({
+      src: logo.src,
+      name: "Logo",
+      fit: "contain",
+      w: logo.w * s,
+      h: logo.h * s,
+      x: d.canvas.w - (logo.w * s) / 2 - 60,
+      y: d.canvas.h - (logo.h * s) / 2 - 60,
+    });
+    setDoc((prev) => ({ ...prev, layers: [...prev.layers, layer] }));
+    setSelectedIds([layer.id]);
+  }, [docRef, setDoc]);
+
+  const openFile = useCallback((purpose) => {
+    filePurposeRef.current = purpose;
+    const input = fileInputRef.current;
+    if (!input) return;
+    input.accept = purpose.kind === "design" ? "application/json,.json" : "image/*";
+    input.click();
+  }, []);
+
+  const onFileChange = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const purpose = filePurposeRef.current;
+    try {
+      if (purpose.kind === "design") {
+        const imported = parseDesignFile(await file.text());
+        await loadFontsForLayers(imported.layers);
+        notifyFontsChanged();
+        replaceDoc(imported);
+        setDesignMeta({ id: null, name: file.name.replace(/\.json$/i, "") || "Imported design" });
+        setSelectedIds([]);
+        setGalleryOpen(false);
+        return;
+      }
+      const { src, w, h: ih } = await importImageFile(file);
+      const d = docRef.current;
+      if (!d) return;
+      if (purpose.kind === "image") {
+        const s = Math.min((d.canvas.w * 0.6) / w, (d.canvas.h * 0.6) / ih, 1);
+        const layer = makeImageLayer({ src, w: w * s, h: ih * s, x: d.canvas.w / 2, y: d.canvas.h / 2 });
+        setDoc((prev) => ({ ...prev, layers: [...prev.layers, layer] }));
+        setSelectedIds([layer.id]);
+      } else if (purpose.kind === "background") {
+        setDoc((prev) => {
+          const bgIdx = prev.layers.findIndex((l) => l.type === "image" && l.name === "Background" && l.locked);
+          if (bgIdx >= 0) {
+            const layers = prev.layers.slice();
+            layers[bgIdx] = { ...layers[bgIdx], src, x: prev.canvas.w / 2, y: prev.canvas.h / 2, w: prev.canvas.w, h: prev.canvas.h };
+            return { ...prev, layers };
+          }
+          const { image, overlay } = makeBackgroundLayers(src, prev.canvas, prev.brand);
+          return { ...prev, layers: [image, overlay, ...prev.layers] };
+        });
+        setToast("Background + overlay added (locked so they don't steal clicks — unlock in Layers)");
+      } else if (purpose.kind === "logo") {
+        await kvSet("logo", { src, w, h: ih });
+        setHasLogo(true);
+        insertLogo({ src, w, h: ih });
+      } else if (purpose.kind === "replace" && purpose.id) {
+        updateLayer(purpose.id, { src });
+      }
+    } catch (err) {
+      setToast(`Couldn't load file: ${err.message || err}`);
+    }
+  }, [docRef, setDoc, replaceDoc, insertLogo, updateLayer]);
+
+  const addLogo = useCallback(async () => {
+    const logo = await kvGet("logo");
+    if (logo) insertLogo(logo);
+    else openFile({ kind: "logo" });
+  }, [insertLogo, openFile]);
+
+  /* --------------------------------- export -------------------------------- */
+
+  const doExport = useCallback(async (share = false) => {
+    const d = docRef.current;
+    if (!d || exporting) return;
+    setExporting(true);
+    try {
+      const opts = { pixelRatio: exportOpts.scale, format: exportOpts.format, transparentBg: exportOpts.transparent && exportOpts.format === "png" };
+      const blob = await exportDesign(d, opts);
+      const ext = exportOpts.format === "jpeg" ? "jpg" : "png";
+      const name = `${d.brand === "Health" ? "estus-health" : "estus"}-${d.canvas.w}x${d.canvas.h}-${Date.now()}.${ext}`;
+      if (share && typeof navigator !== "undefined" && navigator.canShare) {
+        const f = new File([blob], name, { type: blob.type });
+        if (navigator.canShare({ files: [f] })) {
+          await navigator.share({ files: [f] });
+          setExportOpen(false);
+          return;
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      setExportOpen(false);
+    } catch (err) {
+      if (err && err.name !== "AbortError") setToast(`Export failed: ${err.message || err}`);
+    } finally {
+      setExporting(false);
+    }
+  }, [docRef, exporting, exportOpts]);
+
+  /* -------------------------------- gallery -------------------------------- */
+
+  const refreshGallery = useCallback(async () => setGallery(await listGallery()), []);
+
+  const saveCurrent = useCallback(async () => {
+    const d = docRef.current;
+    if (!d) return;
+    const id = designMetaRef.current.id || newId();
+    const name = designMetaRef.current.name || "Untitled";
+    const ok = await saveToGallery(id, name, d, renderThumbnail(d));
+    setDesignMeta({ id, name });
+    setToast(ok ? "Saved to My designs" : "Couldn't save (storage unavailable)");
+    if (galleryOpen) refreshGallery();
+  }, [docRef, galleryOpen, refreshGallery]);
+
+  const openDesign = useCallback(async (id) => {
+    const loaded = await loadFromGallery(id);
+    if (!loaded) return setToast("Couldn't open that design");
+    await loadFontsForLayers(loaded.layers);
+    notifyFontsChanged();
+    replaceDoc(loaded);
+    const entry = gallery.find((g) => g.id === id);
+    setDesignMeta({ id, name: entry?.name || "Untitled" });
+    setSelectedIds([]);
+    setGalleryOpen(false);
+  }, [gallery, replaceDoc]);
+
+  const newDesign = useCallback(async () => {
+    await loadFontsForLayers(templateFontProbes("hero-statement"));
+    notifyFontsChanged();
+    replaceDoc(createDefaultDoc(docRef.current?.brand || "Estus"));
+    setDesignMeta({ id: null, name: "Untitled" });
+    setSelectedIds([]);
+    setGalleryOpen(false);
+  }, [docRef, replaceDoc]);
+
+  const duplicateDesign = useCallback(async (id) => {
+    const loaded = await loadFromGallery(id);
+    if (!loaded) return;
+    const entry = gallery.find((g) => g.id === id);
+    await saveToGallery(newId(), `${entry?.name || "Untitled"} copy`, loaded, renderThumbnail(loaded));
+    refreshGallery();
+  }, [gallery, refreshGallery]);
+
+  const removeDesign = useCallback(async (id) => {
+    await deleteFromGallery(id);
+    if (designMetaRef.current.id === id) setDesignMeta((m) => ({ ...m, id: null }));
+    refreshGallery();
+  }, [refreshGallery]);
+
+  /* -------------------------------- autosave ------------------------------- */
+
+  const saveTimerRef = useRef(null);
+  useEffect(() => {
+    if (!ready || !doc) return;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      if (!isTransient()) saveAutosave(doc, designMetaRef.current);
+    }, 800);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [doc, ready, designMeta, isTransient]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const flush = () => {
+      if (docRef.current) saveAutosave(docRef.current, designMetaRef.current);
+    };
+    const onVis = () => document.visibilityState === "hidden" && flush();
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [ready, docRef]);
+
+  /* ------------------------------- keyboard -------------------------------- */
+
+  useEffect(() => {
+    const isTypingTarget = () => {
+      const t = document.activeElement;
+      return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+    };
+    const onKeyDown = (e) => {
+      if (isTypingTarget()) return;
+      const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
+      if (mod && key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (mod && key === "y") {
+        e.preventDefault();
+        redo();
+      } else if (mod && key === "d") {
+        e.preventDefault();
+        duplicateLayers(effSelectedRef.current);
+      } else if (mod && key === "c") {
+        const d = docRef.current;
+        if (d && effSelectedRef.current.length) {
+          clipboardRef.current = d.layers.filter((l) => effSelectedRef.current.includes(l.id));
+          e.preventDefault();
+        }
+      } else if (mod && key === "v") {
+        const clip = clipboardRef.current;
+        if (clip && clip.length) {
+          e.preventDefault();
+          const pasted = clip.map((l) => {
+            const copy = { ...l, id: newId(), x: l.x + 16, y: l.y + 16, locked: false };
+            delete copy.stack;
+            return copy;
+          });
+          setDoc((prev) => ({ ...prev, layers: [...prev.layers, ...pasted] }));
+          setSelectedIds(pasted.map((l) => l.id));
+        }
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        deleteLayers(effSelectedRef.current);
+      } else if (e.key === "Escape") {
+        setSelectedIds([]);
+      } else if (e.key.startsWith("Arrow")) {
+        const ids = effSelectedRef.current;
+        if (!ids.length) return;
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+        const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+        beginTransient();
+        const d = docRef.current;
+        updateLayersBulkOpts(
+          ids
+            .map((id) => d.layers.find((l) => l.id === id))
+            .filter((l) => l && !l.locked)
+            .map((l) => ({ id: l.id, updates: { x: l.x + dx, y: l.y + dy } })),
+          { transient: true }
+        );
+      }
+    };
+    const onKeyUp = (e) => {
+      if (e.key.startsWith("Arrow") && !isTypingTarget()) endTransient();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [undo, redo, duplicateLayers, deleteLayers, setDoc, docRef, beginTransient, endTransient, updateLayersBulkOpts]);
+
+  /* --------------------------------- toast --------------------------------- */
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  /* --------------------------------- render -------------------------------- */
+
+  if (!ready || !doc) {
     return (
-      <div
-        key={block.id}
-        onClick={(e) => { e.stopPropagation(); setSelectedId((prev) => prev === block.id ? null : block.id); }}
-        style={{
-          marginTop: block.marginTop * scale,
-          textAlign: block.align,
-          cursor: "pointer",
-          outline: selectedId === block.id ? "2px solid #E87A2E" : "2px solid transparent",
-          outlineOffset: 4 * scale,
-          borderRadius: 2,
-          transition: "outline-color 0.15s",
-          padding: `0 ${2 * scale}px`,
-          position: "relative",
-          zIndex: 2,
-        }}
-      >
-        {lines.map((line, i) => (
-          <div
-            key={i}
-            style={{
-              fontFamily: FONTS[block.font],
-              fontSize: block.size * scale,
-              fontWeight: block.weight,
-              fontStyle: block.italic ? "italic" : "normal",
-              color: isGradient(block.color) ? "transparent" : colorValue(block.color),
-              letterSpacing: block.letterSpacing * scale * (block.size / 18),
-              lineHeight: block.lineHeight,
-              whiteSpace: "pre",
-            }}
-          >
-            <span
-              style={{
-                position: "relative",
-                display: "inline-block",
-                // background-clip: text must sit on the element that directly
-                // contains the text node, or Chromium won't paint it
-                ...(isGradient(block.color) ? {
-                  backgroundImage: cssBackground(block.color),
-                  WebkitBackgroundClip: "text",
-                  backgroundClip: "text",
-                } : {}),
-              }}
-            >
-              {line || " "}
-              {block.strikethrough && line && (
-                <StrikeOverlay
-                  variant={block.strikeStyle}
-                  color={solidColor(block.color)}
-                  fontSize={block.size * scale}
-                />
-              )}
-            </span>
-          </div>
-        ))}
+      <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", background: "#111", color: "#888", fontFamily: "'Inter', sans-serif", fontSize: 14 }}>
+        Loading your studio…
       </div>
     );
-  };
+  }
+
+  const selectedLayers = doc.layers.filter((l) => effSelected.includes(l.id));
+
+  const sidebarContent = (
+    <>
+      <Sidebar
+        brand={brand}
+        onSwitchBrand={switchBrand}
+        onApplyTemplate={applyTemplate}
+        background={doc.canvas.background}
+        onBackground={(v) => setDoc((prev) => ({ ...prev, canvas: { ...prev.canvas, background: v } }), { transient: true })}
+        onBackgroundEnd={endTransient}
+        canvasW={doc.canvas.w}
+        canvasH={doc.canvas.h}
+        onCustomSize={setCustomSize}
+        showSafeZone={showSafeZone}
+        onToggleSafeZone={() => setShowSafeZone((v) => !v)}
+        onAddText={addText}
+        onUploadImage={() => openFile({ kind: "image" })}
+        onSetBackgroundImage={() => openFile({ kind: "background" })}
+        onAddLogo={addLogo}
+        hasLogo={hasLogo}
+        onChangeLogo={() => openFile({ kind: "logo" })}
+        onAddShape={addShape}
+        accent={accent}
+        key={`${doc.canvas.w}x${doc.canvas.h}`}
+      />
+      <LayersPanel
+        layers={doc.layers}
+        canvas={doc.canvas}
+        selectedIds={effSelected}
+        onSelect={setSelectedIds}
+        onRename={renameLayer}
+        onReorderTo={reorderTo}
+        onToggleVisible={toggleVisible}
+        onToggleLock={toggleLock}
+        onRecenter={recenterLayer}
+        accent={accent}
+      />
+      <Inspector
+        brand={brand}
+        layers={selectedLayers}
+        updateLayer={updateLayer}
+        updateSelected={updateSelected}
+        beginTransient={beginTransient}
+        endTransient={endTransient}
+        onAlign={alignSelected}
+        onReplaceImage={(id) => openFile({ kind: "replace", id })}
+        accent={accent}
+      />
+    </>
+  );
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: "#111", color: "#eee", fontFamily: "'Inter', sans-serif", overflow: "hidden" }}>
-      <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display: "none" }} />
-      {/* Preview */}
-      <div onClick={() => setSelectedId(null)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, minWidth: 0, position: "relative" }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", justifyContent: "center" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "#111", color: "#eee", fontFamily: "'Inter', sans-serif", overflow: "hidden" }}>
+      <input ref={fileInputRef} type="file" onChange={onFileChange} style={{ display: "none" }} />
+
+      {/* Top bar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #2a2a2a", flexWrap: "wrap", flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
           {Object.keys(CANVAS_SIZES).map((name) => (
             <button
               key={name}
-              onClick={(e) => { e.stopPropagation(); setCanvasSize(name); }}
+              onClick={() => setCanvasPreset(name)}
+              title={name}
               style={{
-                padding: "4px 10px",
+                padding: "4px 8px",
                 fontSize: 11,
-                background: canvasSize === name ? "#E87A2E" : "#333",
+                background: doc.canvas.preset === name ? accent : "#2a2a2a",
                 color: "#fff",
                 border: "none",
                 borderRadius: 4,
@@ -485,682 +751,250 @@ export default function EstusSocialCreator() {
                 whiteSpace: "nowrap",
               }}
             >
-              {name}
+              {name.replace(/ \(.*\)/, "")}
             </button>
           ))}
-        </div>
-        <div
-          onClick={() => setSelectedId(null)}
-          style={{
-            width: size.w * scale,
-            height: size.h * scale,
-            background: cssBackground(bgColor, 135),
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: verticalAlign === "top" ? "flex-start" : verticalAlign === "bottom" ? "flex-end" : "center",
-            padding: padding * scale,
-            boxShadow: "0 8px 40px rgba(0,0,0,0.6)",
-            overflow: "hidden",
-            flexShrink: 0,
-            position: "relative",
-          }}
-        >
-          {bgImage && (
-            <>
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  backgroundImage: `url(${bgImage})`,
-                  backgroundSize: bgFit === "fill" ? "100% 100%" : bgFit,
-                  backgroundPosition: `${bgPositionX}% ${bgPositionY}%`,
-                  backgroundRepeat: "no-repeat",
-                  filter: bgBlur > 0 ? `blur(${bgBlur * scale}px)` : "none",
-                  transform: bgBlur > 0 ? "scale(1.1)" : "none",
-                  zIndex: 0,
-                }}
-              />
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  backgroundColor: ALL_OVERLAYS[overlayColor] || "#000000",
-                  opacity: overlayOpacity,
-                  zIndex: 1,
-                }}
-              />
-            </>
+          {doc.canvas.preset === "Custom" && (
+            <span style={{ padding: "4px 8px", fontSize: 11, background: accent, color: "#fff", borderRadius: 4 }}>
+              Custom {doc.canvas.w}×{doc.canvas.h}
+            </span>
           )}
-          <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", justifyContent: verticalAlign === "top" ? "flex-start" : verticalAlign === "bottom" ? "flex-end" : "center", flex: 1 }}>
-            <div>
-              {blocks.map((block) => renderPreviewBlock(block))}
-            </div>
-          </div>
         </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-          <button
-            onClick={(e) => { e.stopPropagation(); handleExport(); }}
-            disabled={exporting}
-            style={{
-              padding: "10px 28px",
-              fontSize: 14,
-              fontWeight: 600,
-              fontFamily: "'Oswald', sans-serif",
-              textTransform: "uppercase",
-              letterSpacing: 2,
-              background: exporting ? "#666" : "#E87A2E",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              cursor: exporting ? "wait" : "pointer",
-            }}
-          >
-            {exporting ? "Exporting..." : "Export PNG"}
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowSidebar(!showSidebar); }}
-            style={{
-              padding: "10px 16px",
-              fontSize: 13,
-              background: "#333",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              cursor: "pointer",
-            }}
-          >
-            {showSidebar ? "Hide Panel" : "Show Panel"}
-          </button>
-        </div>
-      </div>
-      {/* Sidebar */}
-      {showSidebar && (
-        <div style={{ width: 340, background: "#1a1a1a", borderLeft: "1px solid #333", overflowY: "auto", padding: 16, flexShrink: 0 }}>
-          <SectionLabel>Brand</SectionLabel>
-          <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-            {Object.keys(BRANDS).map((b) => (
-              <button
-                key={b}
-                onClick={() => switchBrand(b)}
-                style={{
-                  flex: 1,
-                  padding: "8px 6px",
-                  fontSize: 12,
-                  fontWeight: 600,
-                  fontFamily: "'Oswald', sans-serif",
-                  textTransform: "uppercase",
-                  letterSpacing: 1,
-                  background: brand === b ? BRANDS[b].accent : "#2a2a2a",
-                  color: brand === b ? "#fff" : "#ccc",
-                  border: brand === b ? "1px solid transparent" : "1px solid #444",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                {b}
-              </button>
-            ))}
-          </div>
-          <SectionLabel>Templates</SectionLabel>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 16 }}>
-            {[
-              ["hero-statement", "Hero Statement"],
-              ["quote-card", "Quote Card"],
-              ["protocol-tip", "Protocol Tip"],
-              ["stat-callout", "Stat Callout"],
-              ["therapy-goals", "Therapy Goals"],
-            ].map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => applyTemplate(key)}
-                style={{
-                  padding: "8px 6px",
-                  fontSize: 11,
-                  fontWeight: 500,
-                  background: "#2a2a2a",
-                  color: "#ccc",
-                  border: "1px solid #444",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <SectionLabel>Canvas</SectionLabel>
-          <Row label="Background">
-            <ColorPicker value={bgColor} onChange={setBgColor} colors={BRANDS[brand].colors} accent={BRANDS[brand].accent} />
-          </Row>
-          <Row label="Padding">
-            <RangeInput value={padding} min={20} max={120} onChange={setPadding} />
-          </Row>
-          <Row label="V. Align">
-            <select value={verticalAlign} onChange={(e) => setVerticalAlign(e.target.value)} style={selectStyle}>
-              <option value="top">Top</option>
-              <option value="center">Center</option>
-              <option value="bottom">Bottom</option>
-            </select>
-          </Row>
-          <SectionLabel style={{ marginTop: 20 }}>Background Image</SectionLabel>
-          {!bgImage ? (
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <TopBtn onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">↩</TopBtn>
+          <TopBtn onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">↪</TopBtn>
+          <TopBtn onClick={saveCurrent} title="Save to My designs">Save</TopBtn>
+          <TopBtn onClick={() => { refreshGallery(); setGalleryOpen(true); }} title="My designs">Designs</TopBtn>
+          <div style={{ position: "relative" }}>
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => setExportOpen((v) => !v)}
+              disabled={exporting}
               style={{
-                width: "100%",
-                padding: "14px",
-                fontSize: 12,
-                fontWeight: 500,
-                background: "#222",
-                color: "#aaa",
-                border: "2px dashed #444",
+                padding: "7px 18px",
+                fontSize: 13,
+                fontWeight: 600,
+                fontFamily: "'Oswald', sans-serif",
+                textTransform: "uppercase",
+                letterSpacing: 2,
+                background: exporting ? "#666" : accent,
+                color: "#fff",
+                border: "none",
                 borderRadius: 6,
-                cursor: "pointer",
-                marginBottom: 12,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
+                cursor: exporting ? "wait" : "pointer",
               }}
             >
-              <span style={{ fontSize: 18 }}>+</span> Upload Image
+              {exporting ? "Exporting…" : "Export"}
             </button>
-          ) : (
-            <>
-              <div style={{ position: "relative", marginBottom: 10 }}>
-                <div style={{ width: "100%", height: 80, borderRadius: 6, overflow: "hidden", border: "1px solid #444" }}>
-                  <img src={bgImage} alt="bg preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                </div>
-                <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    style={{ flex: 1, padding: "6px", fontSize: 11, background: "#2a2a2a", color: "#ccc", border: "1px solid #444", borderRadius: 4, cursor: "pointer" }}
-                  >
-                    Replace
-                  </button>
-                  <button
-                    onClick={clearImage}
-                    style={{ padding: "6px 12px", fontSize: 11, background: "#4a2020", color: "#f88", border: "1px solid #633", borderRadius: 4, cursor: "pointer" }}
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-              <Row label="Fit">
-                <div style={{ display: "flex", gap: 4 }}>
-                  {["cover", "contain", "fill"].map((f) => (
-                    <button
-                      key={f}
-                      onClick={() => setBgFit(f)}
-                      style={{ padding: "4px 10px", fontSize: 11, background: bgFit === f ? "#E87A2E" : "#333", color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", textTransform: "capitalize" }}
-                    >
-                      {f}
-                    </button>
-                  ))}
-                </div>
-              </Row>
-              <Row label="Position X">
-                <RangeInput value={bgPositionX} min={0} max={100} onChange={setBgPositionX} />
-              </Row>
-              <Row label="Position Y">
-                <RangeInput value={bgPositionY} min={0} max={100} onChange={setBgPositionY} />
-              </Row>
-              <Row label="Blur">
-                <RangeInput value={bgBlur} min={0} max={30} onChange={setBgBlur} />
-              </Row>
-              <div style={{ marginTop: 4, marginBottom: 4 }}>
-                <div style={{ fontSize: 10, color: "#666", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Overlay</div>
-              </div>
-              <Row label="Color">
-                <div style={{ display: "flex", gap: 3 }}>
-                  {Object.entries(BRANDS[brand].overlays).map(([name, hex]) => (
-                    <button
-                      key={name}
-                      title={name}
-                      onClick={() => setOverlayColor(name)}
-                      style={{ width: 22, height: 22, borderRadius: 3, background: hex, border: overlayColor === name ? "2px solid #E87A2E" : "1px solid #555", cursor: "pointer", padding: 0 }}
-                    />
-                  ))}
-                </div>
-              </Row>
-              <Row label="Opacity">
-                <RangeInput value={overlayOpacity} min={0} max={1} step={0.05} onChange={setOverlayOpacity} />
-              </Row>
-            </>
-          )}
-          <SectionLabel style={{ marginTop: 20 }}>Add Text Block</SectionLabel>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 16 }}>
-            {Object.keys(BLOCK_PRESETS).map((name) => (
-              <button
-                key={name}
-                onClick={() => addBlock(name)}
-                style={{ padding: "8px 6px", fontSize: 11, fontWeight: 500, background: "#2a2a2a", color: "#ccc", border: "1px solid #444", borderRadius: 4, cursor: "pointer" }}
-              >
-                + {name}
-              </button>
-            ))}
-          </div>
-          <SectionLabel>Layers ({blocks.length})</SectionLabel>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
-            {blocks.map((b, i) => (
-              <div
-                key={b.id}
-                onClick={() => setSelectedId(b.id)}
-                style={{
-                  padding: "6px 8px",
-                  fontSize: 11,
-                  background: selectedId === b.id ? "#E87A2E22" : "#222",
-                  border: selectedId === b.id ? "1px solid #E87A2E" : "1px solid #333",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  color: "#ccc",
-                }}
-              >
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, marginRight: 8 }}>
-                  <span style={{ color: "#888", marginRight: 4 }}>{i + 1}.</span>
-                  <span style={{ textDecoration: b.strikethrough ? "line-through" : "none" }}>
-                    {b.text.split("\n")[0].substring(0, 22)}
-                  </span>
-                </span>
-                <div style={{ display: "flex", gap: 2 }}>
-                  <MiniBtn onClick={(e) => { e.stopPropagation(); updateBlock(b.id, { strikethrough: !b.strikethrough }); }} active={b.strikethrough}>S</MiniBtn>
-                  <MiniBtn onClick={(e) => { e.stopPropagation(); moveBlock(b.id, -1); }}>↑</MiniBtn>
-                  <MiniBtn onClick={(e) => { e.stopPropagation(); moveBlock(b.id, 1); }}>↓</MiniBtn>
-                  <MiniBtn onClick={(e) => { e.stopPropagation(); duplicateBlock(b.id); }}>⎘</MiniBtn>
-                  <MiniBtn onClick={(e) => { e.stopPropagation(); removeBlock(b.id); }} danger>✕</MiniBtn>
-                </div>
-              </div>
-            ))}
-          </div>
-          {selected && (
-            <>
-              <SectionLabel>Edit Block</SectionLabel>
-              <textarea
-                value={selected.text}
-                onChange={(e) => updateBlock(selected.id, { text: e.target.value })}
-                rows={3}
-                style={{ width: "100%", background: "#222", color: "#eee", border: "1px solid #444", borderRadius: 4, padding: 8, fontSize: 13, fontFamily: "inherit", resize: "vertical", marginBottom: 12, boxSizing: "border-box" }}
+            {exportOpen && (
+              <ExportMenu
+                opts={exportOpts}
+                setOpts={setExportOpts}
+                onExport={() => doExport(false)}
+                onShare={typeof navigator !== "undefined" && !!navigator.canShare ? () => doExport(true) : null}
+                onClose={() => setExportOpen(false)}
+                accent={accent}
               />
-              <Row label="Font">
-                <select value={selected.font} onChange={(e) => updateBlock(selected.id, { font: e.target.value })} style={selectStyle}>
-                  {Object.keys(FONTS).map((f) => <option key={f} value={f}>{f}</option>)}
-                </select>
-              </Row>
-              <Row label="Size">
-                <RangeInput value={selected.size} min={10} max={200} onChange={(v) => updateBlock(selected.id, { size: v })} />
-              </Row>
-              <Row label="Weight">
-                <select value={selected.weight} onChange={(e) => updateBlock(selected.id, { weight: Number(e.target.value) })} style={selectStyle}>
-                  {[300, 400, 500, 600, 700].map((w) => <option key={w} value={w}>{w}</option>)}
-                </select>
-              </Row>
-              <Row label="Color">
-                <ColorPicker value={selected.color} onChange={(v) => updateBlock(selected.id, { color: v })} colors={BRANDS[brand].colors} accent={BRANDS[brand].accent} />
-              </Row>
-              <Row label="Align">
-                <div style={{ display: "flex", gap: 4 }}>
-                  {["left", "center", "right"].map((a) => (
-                    <button
-                      key={a}
-                      onClick={() => updateBlock(selected.id, { align: a })}
-                      style={{ padding: "4px 10px", fontSize: 11, background: selected.align === a ? "#E87A2E" : "#333", color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", textTransform: "capitalize" }}
-                    >
-                      {a}
-                    </button>
-                  ))}
-                </div>
-              </Row>
-              <Row label="Spacing">
-                <RangeInput value={selected.letterSpacing} min={0} max={20} onChange={(v) => updateBlock(selected.id, { letterSpacing: v })} />
-              </Row>
-              <Row label="Line H.">
-                <RangeInput value={selected.lineHeight} min={0.7} max={2.0} step={0.05} onChange={(v) => updateBlock(selected.id, { lineHeight: v })} />
-              </Row>
-              <Row label="Margin Top">
-                <RangeInput value={selected.marginTop} min={0} max={120} onChange={(v) => updateBlock(selected.id, { marginTop: v })} />
-              </Row>
-              <Row label="Style">
-                <div style={{ display: "flex", gap: 4 }}>
-                  <ToggleBtn active={selected.uppercase} onClick={() => updateBlock(selected.id, { uppercase: !selected.uppercase })}>ABC</ToggleBtn>
-                  <ToggleBtn active={selected.italic} onClick={() => updateBlock(selected.id, { italic: !selected.italic })}><em>I</em></ToggleBtn>
-                  <ToggleBtn active={!!selected.strikethrough} onClick={() => updateBlock(selected.id, { strikethrough: !selected.strikethrough })}><span style={{ textDecoration: "line-through" }}>S</span></ToggleBtn>
-                </div>
-              </Row>
-              {selected.strikethrough && (
-                <Row label="Strike">
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 3, justifyContent: "flex-end" }}>
-                    {STRIKE_STYLES.map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => updateBlock(selected.id, { strikeStyle: s })}
-                        title={s}
-                        style={{
-                          padding: "3px 8px",
-                          fontSize: 10,
-                          background: (selected.strikeStyle || "straight") === s ? "#E87A2E" : "#333",
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: 3,
-                          cursor: "pointer",
-                          textTransform: "capitalize",
-                        }}
-                      >
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                </Row>
-              )}
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 10, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Apply Preset Style</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                  {Object.entries(BLOCK_PRESETS).map(([name, preset]) => (
-                    <button
-                      key={name}
-                      onClick={() => updateBlock(selected.id, { ...preset, color: presetColor(preset.color) })}
-                      style={{ padding: "3px 8px", fontSize: 10, background: "#2a2a2a", color: "#999", border: "1px solid #444", borderRadius: 3, cursor: "pointer" }}
-                    >
-                      {name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
+            )}
+          </div>
+          <TopBtn onClick={() => setShowSidebar((v) => !v)} title={showSidebar ? "Hide panel" : "Show panel"}>{showSidebar ? "⇥" : "⇤"}</TopBtn>
+        </div>
+      </div>
+
+      {/* Main area */}
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+        <Stage
+          doc={doc}
+          selectedIds={effSelected}
+          onSelect={setSelectedIds}
+          editingId={editingId}
+          onEditingChange={setEditingId}
+          updateLayer={updateLayer}
+          updateLayersBulk={updateLayersBulkOpts}
+          beginTransient={beginTransient}
+          endTransient={endTransient}
+          onDuplicate={duplicateLayers}
+          onDelete={deleteLayers}
+          onToggleLock={toggleLock}
+          onMoveZ={moveZ}
+          showSafeZone={showSafeZone}
+          accent={accent}
+          repaintTick={repaintTick}
+        />
+        {showSidebar && !narrow && (
+          <div style={{ width: 300, background: "#1a1a1a", borderLeft: "1px solid #333", overflowY: "auto", padding: 14, flexShrink: 0 }}>
+            {sidebarContent}
+          </div>
+        )}
+      </div>
+
+      {/* Narrow-screen sidebar drawer */}
+      {showSidebar && narrow && (
+        <>
+          <div onClick={() => setShowSidebar(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 20 }} />
+          <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: "min(320px, 88vw)", background: "#1a1a1a", borderLeft: "1px solid #333", overflowY: "auto", padding: 14, zIndex: 21 }}>
+            {sidebarContent}
+          </div>
+        </>
+      )}
+
+      {/* Gallery modal */}
+      {galleryOpen && (
+        <GalleryModal
+          gallery={gallery}
+          currentMeta={designMeta}
+          onRenameCurrent={(name) => setDesignMeta((m) => ({ ...m, name }))}
+          onSave={saveCurrent}
+          onOpen={openDesign}
+          onNew={newDesign}
+          onDuplicate={duplicateDesign}
+          onDelete={removeDesign}
+          onExportFile={() => downloadDesignFile(docRef.current, `${(designMeta.name || "design").replace(/\s+/g, "-").toLowerCase()}.json`)}
+          onImportFile={() => openFile({ kind: "design" })}
+          onClose={() => setGalleryOpen(false)}
+          accent={accent}
+        />
+      )}
+
+      {toast && (
+        <div style={{ position: "fixed", bottom: 18, left: "50%", transform: "translateX(-50%)", background: "#2a2a2a", border: "1px solid #444", color: "#eee", padding: "10px 18px", borderRadius: 8, fontSize: 13, zIndex: 40, boxShadow: "0 6px 24px rgba(0,0,0,0.5)", maxWidth: "80vw" }}>
+          {toast}
         </div>
       )}
     </div>
   );
 }
 
-function drawStrike(ctx, variant, x, drawY, w, fontSize, color) {
-  if (!w || w <= 0) return;
-  const thickness = Math.max(1, fontSize * 0.06);
-  const centerY = drawY + fontSize * 0.5;
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.lineWidth = thickness;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-
-  if (variant === "double") {
-    const offset = thickness * 1.1;
-    ctx.beginPath();
-    ctx.moveTo(x, centerY - offset);
-    ctx.lineTo(x + w, centerY - offset);
-    ctx.moveTo(x, centerY + offset);
-    ctx.lineTo(x + w, centerY + offset);
-    ctx.stroke();
-  } else if (variant === "diagonal") {
-    ctx.beginPath();
-    ctx.moveTo(x, drawY + fontSize * 0.92);
-    ctx.lineTo(x + w, drawY + fontSize * 0.08);
-    ctx.stroke();
-  } else if (variant === "wavy") {
-    const period = fontSize * 0.45;
-    const amp = fontSize * 0.09;
-    ctx.beginPath();
-    ctx.moveTo(x, centerY);
-    let cx = x;
-    let dir = 1;
-    while (cx < x + w) {
-      const half = period / 2;
-      const next = Math.min(cx + half, x + w);
-      const ctrlX = (cx + next) / 2;
-      const ctrlY = centerY + amp * dir;
-      ctx.quadraticCurveTo(ctrlX, ctrlY, next, centerY);
-      cx = next;
-      dir *= -1;
-    }
-    ctx.stroke();
-  } else if (variant === "scribble") {
-    const segs = Math.max(8, Math.round(w / (fontSize * 0.45)));
-    const amp = thickness * 1.4;
-    const drawPath = (phase, lineW, opacity) => {
-      ctx.globalAlpha = opacity;
-      ctx.lineWidth = lineW;
-      ctx.beginPath();
-      ctx.moveTo(x, centerY + Math.sin(phase) * amp);
-      for (let s = 1; s <= segs; s++) {
-        const px = x + (w * s) / segs;
-        const py = centerY + Math.sin(phase + s * 1.9) * amp;
-        ctx.lineTo(px, py);
-      }
-      ctx.stroke();
-    };
-    drawPath(0, thickness, 1);
-    drawPath(Math.PI, thickness * 0.7, 0.55);
-  } else if (variant === "marker") {
-    ctx.globalAlpha = 0.4;
-    const h = fontSize * 0.6;
-    const r = thickness;
-    const top = drawY + fontSize * 0.2;
-    if (typeof ctx.roundRect === "function") {
-      ctx.beginPath();
-      ctx.roundRect(x, top, w, h, r);
-      ctx.fill();
-    } else {
-      ctx.fillRect(x, top, w, h);
-    }
-  } else {
-    ctx.beginPath();
-    ctx.moveTo(x, centerY + fontSize * 0.05);
-    ctx.lineTo(x + w, centerY + fontSize * 0.05);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function drawImageFit(ctx, img, cw, ch, fit, posX, posY, bleedExtra) {
-  const iw = img.naturalWidth || img.width;
-  const ih = img.naturalHeight || img.height;
-  let sx = 0, sy = 0, sw = iw, sh = ih;
-  let dx = -bleedExtra, dy = -bleedExtra, dw = cw + bleedExtra * 2, dh = ch + bleedExtra * 2;
-  if (fit === "cover") {
-    const canvasRatio = cw / ch;
-    const imgRatio = iw / ih;
-    if (imgRatio > canvasRatio) {
-      const visibleWidth = ih * canvasRatio;
-      sx = ((iw - visibleWidth) * posX) / 100;
-      sw = visibleWidth;
-    } else {
-      const visibleHeight = iw / canvasRatio;
-      sy = ((ih - visibleHeight) * posY) / 100;
-      sh = visibleHeight;
-    }
-  } else if (fit === "contain") {
-    const canvasRatio = cw / ch;
-    const imgRatio = iw / ih;
-    if (imgRatio > canvasRatio) {
-      const drawH = cw / imgRatio;
-      dx = -bleedExtra;
-      dy = ((ch - drawH) * posY) / 100 - bleedExtra;
-      dw = cw + bleedExtra * 2;
-      dh = drawH + bleedExtra * 2;
-    } else {
-      const drawW = ch * imgRatio;
-      dx = ((cw - drawW) * posX) / 100 - bleedExtra;
-      dy = -bleedExtra;
-      dw = drawW + bleedExtra * 2;
-      dh = ch + bleedExtra * 2;
-    }
-  }
-  ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
-}
-
-function StrikeOverlay({ variant, color, fontSize }) {
-  const thickness = Math.max(1, fontSize * 0.06);
-  const baseStyle = {
-    position: "absolute",
-    inset: 0,
-    width: "100%",
-    height: "100%",
-    pointerEvents: "none",
-    overflow: "visible",
-  };
-
-  if (variant === "double") {
-    const offset = thickness * 1.1;
-    return (
-      <svg style={baseStyle} preserveAspectRatio="none">
-        <line x1="0" y1={`calc(50% - ${offset}px)`} x2="100%" y2={`calc(50% - ${offset}px)`} stroke={color} strokeWidth={thickness} strokeLinecap="round" />
-        <line x1="0" y1={`calc(50% + ${offset}px)`} x2="100%" y2={`calc(50% + ${offset}px)`} stroke={color} strokeWidth={thickness} strokeLinecap="round" />
-      </svg>
-    );
-  }
-
-  if (variant === "diagonal") {
-    return (
-      <svg style={baseStyle} preserveAspectRatio="none">
-        <line x1="0%" y1="92%" x2="100%" y2="8%" stroke={color} strokeWidth={thickness} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-      </svg>
-    );
-  }
-
-  if (variant === "wavy") {
-    return (
-      <svg style={baseStyle} preserveAspectRatio="none" viewBox="0 0 100 20">
-        <path
-          d="M 0 10 Q 2.5 3 5 10 T 10 10 T 15 10 T 20 10 T 25 10 T 30 10 T 35 10 T 40 10 T 45 10 T 50 10 T 55 10 T 60 10 T 65 10 T 70 10 T 75 10 T 80 10 T 85 10 T 90 10 T 95 10 T 100 10"
-          fill="none"
-          stroke={color}
-          strokeWidth={thickness}
-          strokeLinecap="round"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
-    );
-  }
-
-  if (variant === "scribble") {
-    return (
-      <svg style={baseStyle} preserveAspectRatio="none" viewBox="0 0 100 20">
-        <path
-          d="M 0 9 L 6 13 L 12 7 L 18 13 L 24 8 L 30 12 L 36 7 L 42 13 L 48 8 L 54 12 L 60 7 L 66 13 L 72 8 L 78 12 L 84 7 L 90 13 L 96 8 L 100 11"
-          fill="none"
-          stroke={color}
-          strokeWidth={thickness}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-        />
-        <path
-          d="M 0 11 L 6 7 L 12 13 L 18 8 L 24 12 L 30 7 L 36 13 L 42 8 L 48 12 L 54 7 L 60 13 L 66 8 L 72 12 L 78 7 L 84 13 L 90 8 L 96 12 L 100 9"
-          fill="none"
-          stroke={color}
-          strokeWidth={thickness * 0.7}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-          opacity="0.55"
-        />
-      </svg>
-    );
-  }
-
-  if (variant === "marker") {
-    return (
-      <div
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          top: "20%",
-          height: "60%",
-          background: color,
-          opacity: 0.4,
-          borderRadius: thickness,
-          pointerEvents: "none",
-        }}
-      />
-    );
-  }
-
+function TopBtn({ children, onClick, disabled, title }) {
   return (
-    <svg style={baseStyle} preserveAspectRatio="none">
-      <line x1="0" y1="55%" x2="100%" y2="55%" stroke={color} strokeWidth={thickness} strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function SectionLabel({ children, style }) {
-  return (
-    <div style={{ fontSize: 10, fontWeight: 600, color: "#E87A2E", textTransform: "uppercase", letterSpacing: 2, marginBottom: 8, fontFamily: "'Oswald', sans-serif", ...style }}>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      style={{
+        padding: "6px 12px",
+        fontSize: 13,
+        background: "#2a2a2a",
+        color: disabled ? "#555" : "#ddd",
+        border: "1px solid #3a3a3a",
+        borderRadius: 6,
+        cursor: disabled ? "default" : "pointer",
+      }}
+    >
       {children}
+    </button>
+  );
+}
+
+function ExportMenu({ opts, setOpts, onExport, onShare, onClose, accent }) {
+  const opt = { padding: "4px 10px", fontSize: 11, border: "none", borderRadius: 3, cursor: "pointer", color: "#fff" };
+  return (
+    <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", background: "#222", border: "1px solid #444", borderRadius: 8, padding: 12, zIndex: 30, width: 230, boxShadow: "0 8px 30px rgba(0,0,0,0.6)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, alignItems: "center" }}>
+        <span style={{ fontSize: 11, color: "#888" }}>Format</span>
+        <div style={{ display: "flex", gap: 4 }}>
+          {["png", "jpeg"].map((f) => (
+            <button key={f} onClick={() => setOpts((o) => ({ ...o, format: f, transparent: f === "jpeg" ? false : o.transparent }))} style={{ ...opt, background: opts.format === f ? accent : "#333", textTransform: "uppercase" }}>
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, alignItems: "center" }}>
+        <span style={{ fontSize: 11, color: "#888" }}>Size</span>
+        <div style={{ display: "flex", gap: 4 }}>
+          {[1, 2].map((s) => (
+            <button key={s} onClick={() => setOpts((o) => ({ ...o, scale: s }))} style={{ ...opt, background: opts.scale === s ? accent : "#333" }}>
+              {s}×
+            </button>
+          ))}
+        </div>
+      </div>
+      <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, fontSize: 11, color: opts.format === "jpeg" ? "#555" : "#888", cursor: opts.format === "jpeg" ? "default" : "pointer" }}>
+        Transparent background
+        <input
+          type="checkbox"
+          checked={opts.transparent && opts.format === "png"}
+          disabled={opts.format === "jpeg"}
+          onChange={(e) => setOpts((o) => ({ ...o, transparent: e.target.checked }))}
+          style={{ accentColor: accent }}
+        />
+      </label>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button onClick={onExport} style={{ flex: 1, padding: "8px", fontSize: 12, fontWeight: 600, background: accent, color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>
+          Download
+        </button>
+        {onShare && (
+          <button onClick={onShare} title="Share to another app" style={{ padding: "8px 12px", fontSize: 12, background: "#333", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>
+            Share
+          </button>
+        )}
+      </div>
+      <button onClick={onClose} style={{ position: "absolute", top: 6, right: 8, background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 12 }}>✕</button>
     </div>
   );
 }
 
-function Row({ label, children }) {
+function GalleryModal({ gallery, currentMeta, onRenameCurrent, onSave, onOpen, onNew, onDuplicate, onDelete, onExportFile, onImportFile, onClose, accent }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-      <span style={{ fontSize: 11, color: "#888", minWidth: 60 }}>{label}</span>
-      <div style={{ flex: 1, display: "flex", justifyContent: "flex-end" }}>{children}</div>
-    </div>
-  );
-}
-
-function RangeInput({ value, min, max, step = 1, onChange }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: 100, accentColor: "#E87A2E" }} />
-      <span style={{ fontSize: 11, color: "#aaa", minWidth: 32, textAlign: "right" }}>{typeof value === "number" && value % 1 !== 0 ? value.toFixed(2) : value}</span>
-    </div>
-  );
-}
-
-function ColorPicker({ value, onChange, colors, accent }) {
-  return (
-    <div style={{ display: "flex", gap: 3, flexWrap: "wrap", justifyContent: "flex-end" }}>
-      {Object.keys(colors).map((name) => {
-        const hex = colors[name];
-        return (
-          <button
-            key={name}
-            title={name}
-            onClick={() => onChange(name)}
-            style={{ width: 18, height: 18, borderRadius: 3, background: cssBackground(name), border: value === name ? `2px solid ${accent}` : hex === "#000000" || hex === "#1A1A1A" ? "1px solid #555" : "1px solid #333", cursor: "pointer", padding: 0 }}
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#1c1c1c", border: "1px solid #3a3a3a", borderRadius: 12, width: "min(720px, 94vw)", maxHeight: "84vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #2e2e2e" }}>
+          <span style={{ fontSize: 13, fontWeight: 600, fontFamily: "'Oswald', sans-serif", textTransform: "uppercase", letterSpacing: 2, color: accent }}>My designs</span>
+          <div style={{ flex: 1 }} />
+          <input
+            value={currentMeta.name}
+            onChange={(e) => onRenameCurrent(e.target.value)}
+            placeholder="Design name"
+            style={{ background: "#111", color: "#eee", border: "1px solid #444", borderRadius: 5, padding: "5px 10px", fontSize: 12, width: 160 }}
           />
-        );
-      })}
+          <button onClick={onSave} style={{ padding: "6px 14px", fontSize: 12, fontWeight: 600, background: accent, color: "#fff", border: "none", borderRadius: 5, cursor: "pointer" }}>
+            Save current
+          </button>
+          <button onClick={onNew} style={{ padding: "6px 14px", fontSize: 12, background: "#333", color: "#eee", border: "none", borderRadius: 5, cursor: "pointer" }}>
+            + New
+          </button>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 16 }}>✕</button>
+        </div>
+        <div style={{ padding: 16, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+          {!gallery.length && <div style={{ color: "#777", fontSize: 13, gridColumn: "1 / -1", textAlign: "center", padding: 30 }}>Nothing saved yet. "Save current" keeps a copy of this design you can come back to or duplicate for the next post.</div>}
+          {gallery.map((g) => (
+            <div key={g.id} style={{ border: g.id === currentMeta.id ? `1px solid ${accent}` : "1px solid #333", borderRadius: 8, overflow: "hidden", background: "#161616" }}>
+              <button onClick={() => onOpen(g.id)} title="Open" style={{ display: "block", width: "100%", padding: 0, border: "none", cursor: "pointer", background: "#0d0d0d" }}>
+                {g.thumbnail ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={g.thumbnail} alt={g.name} style={{ width: "100%", height: 110, objectFit: "contain", display: "block" }} />
+                ) : (
+                  <div style={{ height: 110 }} />
+                )}
+              </button>
+              <div style={{ padding: "6px 8px" }}>
+                <div style={{ fontSize: 12, color: "#ddd", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name || "Untitled"}</div>
+                <div style={{ fontSize: 10, color: "#666", margin: "2px 0 6px" }}>{new Date(g.savedAt).toLocaleDateString()}</div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <GBtn onClick={() => onOpen(g.id)}>Open</GBtn>
+                  <GBtn onClick={() => onDuplicate(g.id)}>Duplicate</GBtn>
+                  <GBtn danger onClick={() => { if (window.confirm(`Delete "${g.name || "Untitled"}"?`)) onDelete(g.id); }}>✕</GBtn>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 10, padding: "10px 16px", borderTop: "1px solid #2e2e2e", justifyContent: "flex-end" }}>
+          <button onClick={onExportFile} style={{ background: "none", border: "none", color: "#777", cursor: "pointer", fontSize: 11, textDecoration: "underline" }}>Export .json file</button>
+          <button onClick={onImportFile} style={{ background: "none", border: "none", color: "#777", cursor: "pointer", fontSize: 11, textDecoration: "underline" }}>Import .json file</button>
+        </div>
+      </div>
     </div>
   );
 }
 
-function MiniBtn({ children, onClick, danger, active }) {
-  const bg = danger ? "#4a2020" : active ? "#E87A2E" : "#333";
-  const color = danger ? "#f88" : active ? "#fff" : "#aaa";
+function GBtn({ children, onClick, danger }) {
   return (
     <button
       onClick={onClick}
-      style={{ width: 20, height: 20, fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", background: bg, color, border: "none", borderRadius: 3, cursor: "pointer", padding: 0 }}
+      style={{ flex: danger ? "0 0 auto" : 1, padding: "4px 6px", fontSize: 10, background: danger ? "#3a2020" : "#2a2a2a", color: danger ? "#f88" : "#ccc", border: "1px solid #3a3a3a", borderRadius: 4, cursor: "pointer" }}
     >
       {children}
     </button>
   );
 }
-
-function ToggleBtn({ children, active, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{ padding: "4px 10px", fontSize: 11, background: active ? "#E87A2E" : "#333", color: "#fff", border: "none", borderRadius: 3, cursor: "pointer" }}
-    >
-      {children}
-    </button>
-  );
-}
-
-const selectStyle = {
-  background: "#222",
-  color: "#eee",
-  border: "1px solid #444",
-  borderRadius: 4,
-  padding: "4px 8px",
-  fontSize: 12,
-  maxWidth: 140,
-};
