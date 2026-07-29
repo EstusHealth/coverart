@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, createContext, useContext } from "react";
 
 const BRANDS = {
   "Estus": {
     accent: "#E87A2E",
+    slug: "estus",
     defaultBg: "Off-Black",
+    defaultText: "White",
     colors: {
       "White": "#FFFFFF",
       "Estus Orange": "#E87A2E",
@@ -26,7 +28,9 @@ const BRANDS = {
   },
   "Health": {
     accent: "#2AA2B4",
+    slug: "estus-health",
     defaultBg: "White",
+    defaultText: "Primary Navy",
     colors: {
       "White": "#FFFFFF",
       "Primary Navy": "#30487E",
@@ -45,21 +49,58 @@ const BRANDS = {
       "Teal": "#2AA2B4",
     },
   },
+  // Block-game palette sampled from the source material: grass top, diamond,
+  // the §6 gold of item names, redstone dust, oak planks, dirt, deepslate,
+  // obsidian — plus a nether-portal gradient as the feature colour.
+  "Minecraft": {
+    accent: "#6CBB3C",
+    slug: "estus-minecraft",
+    defaultBg: "Obsidian",
+    defaultText: "White",
+    colors: {
+      "White": "#FFFFFF",
+      "Iron Grey": "#C6C6C6",
+      "Stone Grey": "#8C8C8C",
+      "Grass Green": "#6CBB3C",
+      "Diamond": "#4AEDD9",
+      "Gold": "#FFAA00",
+      "Redstone": "#CE3B32",
+      "Oak Tan": "#BC8F52",
+      "Dirt Brown": "#7A5334",
+      "Deepslate": "#4A4A4F",
+      "Obsidian": "#14121F",
+      "Nether Portal": { gradient: ["#C77DFF", "#8A2BE2", "#4B1580"] },
+    },
+    overlays: {
+      "Black": "#000000",
+      "Obsidian": "#14121F",
+      "Deepslate": "#4A4A4F",
+      "Dirt Brown": "#7A5334",
+      "Nether Purple": "#4B1580",
+    },
+  },
 };
-const ALL_COLORS = { ...BRANDS["Estus"].colors, ...BRANDS["Health"].colors };
-const ALL_OVERLAYS = { ...BRANDS["Estus"].overlays, ...BRANDS["Health"].overlays };
-// Colour-name translations INTO each brand, applied when switching brand and
-// when instantiating the (Estus-named) presets/templates under another brand.
+const ALL_COLORS = Object.assign({}, ...Object.values(BRANDS).map((b) => b.colors));
+const ALL_OVERLAYS = Object.assign({}, ...Object.values(BRANDS).map((b) => b.overlays));
+// Colour-name translations INTO each brand, keyed by the foreign colour names
+// they replace. Applied when switching brand and when instantiating the
+// (Estus-named) presets/templates under another brand. Unmapped names fall
+// back to the target brand's default, so a partial table is always safe.
 const BRAND_REMAP = {
   "Health": {
-    text: { "White": "Primary Navy", "Estus Orange": "Teal", "Noctua Brown": "Primary Navy", "Light Grey": "Deep Navy", "Mid Grey": "Deep Navy", "Dark Grey": "Deep Navy", "Off-Black": "Deep Navy", "Pure Black": "Deep Navy", "Cream": "Magenta" },
-    bg: { "Off-Black": "White", "Pure Black": "Deep Navy", "Cream": "White", "Light Grey": "White", "Mid Grey": "Deep Navy", "Dark Grey": "Deep Navy", "Estus Orange": "Teal", "Noctua Brown": "Primary Navy" },
-    overlay: { "Off-Black": "Deep Navy", "Noctua Brown": "Primary Navy", "Estus Orange": "Teal" },
+    text: { "White": "Primary Navy", "Estus Orange": "Teal", "Noctua Brown": "Primary Navy", "Light Grey": "Deep Navy", "Mid Grey": "Deep Navy", "Dark Grey": "Deep Navy", "Off-Black": "Deep Navy", "Pure Black": "Deep Navy", "Cream": "Magenta", "Iron Grey": "Deep Navy", "Stone Grey": "Gradient Violet", "Grass Green": "Teal", "Diamond": "Teal", "Gold": "Magenta", "Redstone": "Magenta", "Oak Tan": "Primary Navy", "Dirt Brown": "Primary Navy", "Deepslate": "Deep Navy", "Obsidian": "Deep Navy", "Nether Portal": "Health Gradient" },
+    bg: { "Off-Black": "White", "Pure Black": "Deep Navy", "Cream": "White", "Light Grey": "White", "Mid Grey": "Deep Navy", "Dark Grey": "Deep Navy", "Estus Orange": "Teal", "Noctua Brown": "Primary Navy", "Iron Grey": "White", "Stone Grey": "White", "Grass Green": "Teal", "Diamond": "Teal", "Gold": "Magenta", "Redstone": "Magenta", "Oak Tan": "White", "Dirt Brown": "Primary Navy", "Deepslate": "Deep Navy", "Obsidian": "Deep Navy", "Nether Portal": "Health Gradient" },
+    overlay: { "Off-Black": "Deep Navy", "Noctua Brown": "Primary Navy", "Estus Orange": "Teal", "Obsidian": "Deep Navy", "Deepslate": "Deep Navy", "Dirt Brown": "Primary Navy", "Nether Purple": "Primary Navy" },
   },
   "Estus": {
-    text: { "Primary Navy": "White", "Deep Navy": "Light Grey", "Teal": "Estus Orange", "Magenta": "Cream", "Gradient Blue": "Light Grey", "Gradient Violet": "Mid Grey", "Gradient Purple": "Noctua Brown", "Health Gradient": "Estus Orange" },
-    bg: { "White": "Off-Black", "Deep Navy": "Off-Black", "Primary Navy": "Off-Black", "Teal": "Estus Orange", "Magenta": "Noctua Brown", "Gradient Blue": "Off-Black", "Gradient Violet": "Off-Black", "Gradient Purple": "Off-Black", "Health Gradient": "Off-Black" },
-    overlay: { "Deep Navy": "Off-Black", "Primary Navy": "Noctua Brown", "Teal": "Estus Orange" },
+    text: { "Primary Navy": "White", "Deep Navy": "Light Grey", "Teal": "Estus Orange", "Magenta": "Cream", "Gradient Blue": "Light Grey", "Gradient Violet": "Mid Grey", "Gradient Purple": "Noctua Brown", "Health Gradient": "Estus Orange", "Iron Grey": "Light Grey", "Stone Grey": "Mid Grey", "Grass Green": "Estus Orange", "Diamond": "Cream", "Gold": "Estus Orange", "Redstone": "Noctua Brown", "Oak Tan": "Noctua Brown", "Dirt Brown": "Noctua Brown", "Deepslate": "Dark Grey", "Obsidian": "Off-Black", "Nether Portal": "Estus Orange" },
+    bg: { "White": "Off-Black", "Deep Navy": "Off-Black", "Primary Navy": "Off-Black", "Teal": "Estus Orange", "Magenta": "Noctua Brown", "Gradient Blue": "Off-Black", "Gradient Violet": "Off-Black", "Gradient Purple": "Off-Black", "Health Gradient": "Off-Black", "Iron Grey": "Cream", "Stone Grey": "Dark Grey", "Grass Green": "Estus Orange", "Diamond": "Cream", "Gold": "Estus Orange", "Redstone": "Noctua Brown", "Oak Tan": "Noctua Brown", "Dirt Brown": "Noctua Brown", "Deepslate": "Dark Grey", "Obsidian": "Off-Black", "Nether Portal": "Off-Black" },
+    overlay: { "Deep Navy": "Off-Black", "Primary Navy": "Noctua Brown", "Teal": "Estus Orange", "Obsidian": "Off-Black", "Deepslate": "Off-Black", "Dirt Brown": "Noctua Brown", "Nether Purple": "Noctua Brown" },
+  },
+  "Minecraft": {
+    text: { "Estus Orange": "Gold", "Noctua Brown": "Oak Tan", "Light Grey": "Iron Grey", "Mid Grey": "Stone Grey", "Dark Grey": "Deepslate", "Off-Black": "Obsidian", "Pure Black": "Obsidian", "Cream": "Oak Tan", "Primary Navy": "White", "Deep Navy": "Iron Grey", "Teal": "Diamond", "Magenta": "Redstone", "Gradient Blue": "Iron Grey", "Gradient Violet": "Stone Grey", "Gradient Purple": "Oak Tan", "Health Gradient": "Nether Portal" },
+    bg: { "White": "Obsidian", "Off-Black": "Obsidian", "Pure Black": "Obsidian", "Cream": "Oak Tan", "Light Grey": "Stone Grey", "Mid Grey": "Deepslate", "Dark Grey": "Deepslate", "Estus Orange": "Gold", "Noctua Brown": "Dirt Brown", "Primary Navy": "Deepslate", "Deep Navy": "Obsidian", "Teal": "Diamond", "Magenta": "Redstone", "Gradient Blue": "Deepslate", "Gradient Violet": "Deepslate", "Gradient Purple": "Dirt Brown", "Health Gradient": "Nether Portal" },
+    overlay: { "Off-Black": "Obsidian", "Deep Navy": "Obsidian", "Primary Navy": "Deepslate", "Noctua Brown": "Dirt Brown", "Estus Orange": "Dirt Brown", "Teal": "Nether Purple" },
   },
 };
 // Colour values are either a hex string or { gradient: [stops] }
@@ -80,11 +121,61 @@ const canvasFill = (ctx, name, x0, y0, x1, y1) => {
   v.gradient.forEach((c, i) => g.addColorStop(i / (v.gradient.length - 1), c));
   return g;
 };
+// The game draws every string twice: once offset by one font-pixel in the
+// text colour multiplied by 0.25, then the text itself on top.
+const SHADOW_MIX = 0.25;
+const shadowOffset = (fontSize) => Math.max(1, Math.round(fontSize / 8));
+const shadowColorOf = (colorName) => {
+  const hex = solidColor(colorName);
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (shift) => Math.round(((n >> shift) & 255) * SHADOW_MIX);
+  return `rgb(${ch(16)}, ${ch(8)}, ${ch(0)})`;
+};
 const FONTS = {
   "Oswald": "'Oswald', sans-serif",
   "Libre Baskerville": "'Libre Baskerville', serif",
   "Inter": "'Inter', sans-serif",
+  "Press Start 2P": "'Press Start 2P', monospace",
+  "Silkscreen": "'Silkscreen', monospace",
+  "VT323": "'VT323', monospace",
 };
+// Only weights that actually ship as a face — picking one that doesn't exist
+// means the browser synthesises it, which the canvas export can't reproduce
+// predictably.
+const FONT_WEIGHTS = {
+  "Oswald": [300, 400, 500, 600, 700],
+  "Libre Baskerville": [400, 700],
+  "Inter": [300, 400, 500, 600, 700],
+  "Press Start 2P": [400],
+  "Silkscreen": [400, 700],
+  "VT323": [400],
+};
+const clampWeight = (font, weight) => {
+  const list = FONT_WEIGHTS[font] || [400];
+  return list.reduce((best, w) => (Math.abs(w - weight) < Math.abs(best - weight) ? w : best), list[0]);
+};
+// Switching brand re-types the artwork as well as re-colouring it. Pixel faces
+// set far more type per em, so sizes are rescaled and a minimum leading is
+// enforced to stop the bitmap glyphs colliding. The rules are ordered and the
+// first whose `minSize` the block clears wins: Press Start 2P is a display face
+// and turns to mush at label sizes, so only display-sized Oswald becomes it —
+// smaller Oswald picks up Silkscreen, which stays readable. That mirrors how
+// the Minecraft preset pack itself is typed.
+const TO_PIXEL_FONTS = {
+  "Oswald": [
+    { minSize: 40, font: "Press Start 2P", scale: 0.6, minLineHeight: 1.25 },
+    { minSize: 0, font: "Silkscreen", scale: 1.1, minLineHeight: 1.2 },
+  ],
+  "Libre Baskerville": [{ minSize: 0, font: "Silkscreen", scale: 0.8, minLineHeight: 1.2 }],
+  "Inter": [{ minSize: 0, font: "VT323", scale: 1.4, minLineHeight: 1.05 }],
+};
+const TO_PRINT_FONTS = {
+  "Press Start 2P": [{ minSize: 0, font: "Oswald", scale: 1 / 0.6 }],
+  "Silkscreen": [{ minSize: 0, font: "Libre Baskerville", scale: 1 / 0.8 }],
+  "VT323": [{ minSize: 0, font: "Inter", scale: 1 / 1.4 }],
+};
+const FONT_REMAP = { "Minecraft": TO_PIXEL_FONTS, "Estus": TO_PRINT_FONTS, "Health": TO_PRINT_FONTS };
+const fontSwapFor = (brand, font, size) => (FONT_REMAP[brand]?.[font] || []).find((rule) => size >= rule.minSize);
 const CANVAS_SIZES = {
   "IG Square (1080x1080)": { w: 1080, h: 1080 },
   "IG Story (1080x1920)": { w: 1080, h: 1920 },
@@ -94,23 +185,165 @@ const CANVAS_SIZES = {
   "YouTube Thumb (1280x720)": { w: 1280, h: 720 },
 };
 const STRIKE_STYLES = ["straight", "double", "diagonal", "wavy", "scribble", "marker"];
-const BLOCK_PRESETS = {
-  "Eyebrow": { font: "Oswald", size: 18, weight: 400, color: "Light Grey", letterSpacing: 8, uppercase: true, italic: false, align: "center", lineHeight: 1.2, strikethrough: false, strikeStyle: "straight" },
-  "Hero Bold": { font: "Oswald", size: 96, weight: 700, color: "White", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 0.95, strikethrough: false, strikeStyle: "straight" },
-  "Hero Accent": { font: "Oswald", size: 96, weight: 700, color: "Estus Orange", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 0.95, strikethrough: false, strikeStyle: "straight" },
-  "Serif Subtitle": { font: "Libre Baskerville", size: 36, weight: 400, color: "Cream", letterSpacing: 0, uppercase: false, italic: true, align: "center", lineHeight: 1.3, strikethrough: false, strikeStyle: "straight" },
-  "Body": { font: "Inter", size: 24, weight: 400, color: "Light Grey", letterSpacing: 0, uppercase: false, italic: false, align: "center", lineHeight: 1.5, strikethrough: false, strikeStyle: "straight" },
-  "CTA Label": { font: "Oswald", size: 22, weight: 600, color: "White", letterSpacing: 4, uppercase: true, italic: false, align: "center", lineHeight: 1.2, strikethrough: false, strikeStyle: "straight" },
-  "Checklist Item": { font: "Inter", size: 32, weight: 500, color: "Cream", letterSpacing: 0, uppercase: false, italic: false, align: "left", lineHeight: 1.4, strikethrough: false, strikeStyle: "straight" },
+
+// ---------------------------------------------------------------------------
+// Block textures
+//
+// Every texture is authored as a 16x16 texel tile — the source material's own
+// resolution — and blown up with nearest-neighbour sampling so the pixels stay
+// square at any size. Generation is seeded, so the tile the preview shows is
+// byte-for-byte the tile the export draws.
+// ---------------------------------------------------------------------------
+const TEXEL = 16;
+const TEXTURE_KINDS = ["none", "dirt", "grass", "stone", "cobble", "planks", "deepslate", "netherrack"];
+const TEXTURE_LABELS = {
+  none: "None", dirt: "Dirt", grass: "Grass", stone: "Stone",
+  cobble: "Cobble", planks: "Planks", deepslate: "Deepslate", netherrack: "Netherrack",
 };
+const TEXTURE_SEEDS = { dirt: 1337, grass: 4242, stone: 8080, cobble: 5150, planks: 2718, deepslate: 9001, netherrack: 6660 };
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function makeTextureCanvas(kind) {
+  const canvas = document.createElement("canvas");
+  canvas.width = TEXEL;
+  canvas.height = TEXEL;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(TEXEL, TEXEL);
+  const rnd = mulberry32(TEXTURE_SEEDS[kind] || 1);
+  const clamp = (n) => Math.max(0, Math.min(255, Math.round(n)));
+  const put = (x, y, [r, g, b], m) => {
+    const i = (y * TEXEL + x) * 4;
+    img.data[i] = clamp(r * m);
+    img.data[i + 1] = clamp(g * m);
+    img.data[i + 2] = clamp(b * m);
+    img.data[i + 3] = 255;
+  };
+  // Flat per-texel noise: tiles seamlessly because no texel depends on its
+  // neighbours.
+  const grain = (base, lo, hi, speckChance, speckMul) => {
+    for (let y = 0; y < TEXEL; y++) {
+      for (let x = 0; x < TEXEL; x++) {
+        let m = lo + rnd() * (hi - lo);
+        if (rnd() < speckChance) m *= speckMul;
+        put(x, y, base, m);
+      }
+    }
+  };
+
+  if (kind === "dirt") {
+    grain([134, 96, 67], 0.78, 1.14, 0.14, 0.72);
+  } else if (kind === "grass") {
+    grain([108, 187, 60], 0.82, 1.12, 0.12, 0.8);
+  } else if (kind === "stone") {
+    grain([126, 126, 126], 0.88, 1.08, 0.06, 0.86);
+  } else if (kind === "netherrack") {
+    grain([112, 54, 52], 0.72, 1.18, 0.13, 0.7);
+  } else if (kind === "deepslate") {
+    // Vertical banding on top of the grain gives deepslate its streaked look.
+    const cols = Array.from({ length: TEXEL }, () => 0.86 + rnd() * 0.26);
+    for (let y = 0; y < TEXEL; y++) {
+      for (let x = 0; x < TEXEL; x++) {
+        let m = cols[x] * (0.94 + rnd() * 0.12);
+        if (rnd() < 0.06) m *= 0.8;
+        put(x, y, [74, 74, 79], m);
+      }
+    }
+  } else if (kind === "planks") {
+    // Four horizontal planks, each with its own tone, a dark seam along the
+    // top edge and one staggered butt-joint.
+    for (let y = 0; y < TEXEL; y++) {
+      const plank = Math.floor(y / 4);
+      const rowM = 0.9 + ((plank * 7) % 5) * 0.045;
+      const joint = (plank * 7 + 3) % TEXEL;
+      for (let x = 0; x < TEXEL; x++) {
+        let m = rowM * (0.95 + rnd() * 0.1);
+        if (y % 4 === 0) m *= 0.72;
+        if (x === joint) m *= 0.62;
+        if (rnd() < 0.08) m *= 0.87;
+        put(x, y, [188, 143, 82], m);
+      }
+    }
+  } else if (kind === "cobble") {
+    // Wrapped Voronoi cells read as stones; the ridge between the nearest two
+    // cells becomes the mortar. Wrapping the distance keeps the tile seamless.
+    const seeds = Array.from({ length: 6 }, () => ({ x: rnd() * TEXEL, y: rnd() * TEXEL, m: 0.82 + rnd() * 0.3 }));
+    for (let y = 0; y < TEXEL; y++) {
+      for (let x = 0; x < TEXEL; x++) {
+        let best = Infinity, second = Infinity, bestIdx = 0;
+        seeds.forEach((s, i) => {
+          const ax = Math.abs(s.x - x), ay = Math.abs(s.y - y);
+          const dx = Math.min(ax, TEXEL - ax), dy = Math.min(ay, TEXEL - ay);
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < best) { second = best; best = d; bestIdx = i; }
+          else if (d < second) { second = d; }
+        });
+        const mortar = second - best < 1.1;
+        put(x, y, [126, 126, 126], mortar ? 0.5 : seeds[bestIdx].m * (0.93 + rnd() * 0.14));
+      }
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+const BLOCK_PRESETS = {
+  "Eyebrow": { sample: "LABEL", font: "Oswald", size: 18, weight: 400, color: "Light Grey", letterSpacing: 8, uppercase: true, italic: false, align: "center", lineHeight: 1.2, strikethrough: false, strikeStyle: "straight", pixelShadow: false },
+  "Hero Bold": { sample: "HEADLINE", font: "Oswald", size: 96, weight: 700, color: "White", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 0.95, strikethrough: false, strikeStyle: "straight", pixelShadow: false },
+  "Hero Accent": { sample: "ACCENT", font: "Oswald", size: 96, weight: 700, color: "Estus Orange", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 0.95, strikethrough: false, strikeStyle: "straight", pixelShadow: false },
+  "Serif Subtitle": { sample: "Subtitle here.", font: "Libre Baskerville", size: 36, weight: 400, color: "Cream", letterSpacing: 0, uppercase: false, italic: true, align: "center", lineHeight: 1.3, strikethrough: false, strikeStyle: "straight", pixelShadow: false },
+  "Body": { sample: "Body text here.", font: "Inter", size: 24, weight: 400, color: "Light Grey", letterSpacing: 0, uppercase: false, italic: false, align: "center", lineHeight: 1.5, strikethrough: false, strikeStyle: "straight", pixelShadow: false },
+  "CTA Label": { sample: "BUTTON TEXT", font: "Oswald", size: 22, weight: 600, color: "White", letterSpacing: 4, uppercase: true, italic: false, align: "center", lineHeight: 1.2, strikethrough: false, strikeStyle: "straight", pixelShadow: false },
+  "Checklist Item": { sample: "Checklist item.", font: "Inter", size: 32, weight: 500, color: "Cream", letterSpacing: 0, uppercase: false, italic: false, align: "left", lineHeight: 1.4, strikethrough: false, strikeStyle: "straight", pixelShadow: false },
+};
+// Same keys as the base pack — templates address presets by key, so keeping the
+// keys aligned means every template composes under every brand — but re-typed
+// in bitmap faces, re-coloured, and with the drop shadow on by default.
+const MINECRAFT_PRESETS = {
+  "Eyebrow": { label: "Sign Line", sample: "ADVANCEMENT MADE!", font: "Silkscreen", size: 20, weight: 400, color: "Gold", letterSpacing: 2, uppercase: true, italic: false, align: "center", lineHeight: 1.3, strikethrough: false, strikeStyle: "straight", pixelShadow: true },
+  "Hero Bold": { label: "Title", sample: "TAKING", font: "Press Start 2P", size: 58, weight: 400, color: "White", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 1.35, strikethrough: false, strikeStyle: "straight", pixelShadow: true },
+  "Hero Accent": { label: "Title Accent", sample: "INVENTORY", font: "Press Start 2P", size: 58, weight: 400, color: "Gold", letterSpacing: 0, uppercase: true, italic: false, align: "center", lineHeight: 1.35, strikethrough: false, strikeStyle: "straight", pixelShadow: true },
+  "Serif Subtitle": { label: "Subtitle", sample: "Notice what you carry.", font: "Silkscreen", size: 28, weight: 400, color: "Diamond", letterSpacing: 0, uppercase: false, italic: false, align: "center", lineHeight: 1.4, strikethrough: false, strikeStyle: "straight", pixelShadow: true },
+  "Body": { label: "Lore Text", sample: "Body text here.", font: "VT323", size: 34, weight: 400, color: "Iron Grey", letterSpacing: 0, uppercase: false, italic: false, align: "center", lineHeight: 1.25, strikethrough: false, strikeStyle: "straight", pixelShadow: true },
+  "CTA Label": { label: "Button", sample: "RESPAWN", font: "Silkscreen", size: 24, weight: 700, color: "White", letterSpacing: 3, uppercase: true, italic: false, align: "center", lineHeight: 1.3, strikethrough: false, strikeStyle: "straight", pixelShadow: true },
+  "Checklist Item": { label: "Advancement", sample: "Craft a sensory toolkit.", font: "VT323", size: 40, weight: 400, color: "Iron Grey", letterSpacing: 0, uppercase: false, italic: false, align: "left", lineHeight: 1.2, strikethrough: false, strikeStyle: "straight", pixelShadow: true },
+};
+const BRAND_PRESETS = { "Minecraft": MINECRAFT_PRESETS };
+const presetsFor = (brand) => BRAND_PRESETS[brand] || BLOCK_PRESETS;
+// `label` and `sample` describe the preset in the UI; they are not block state.
+const presetStyle = ({ label, sample, ...style }) => style;
+
+const BASE_TEMPLATES = [
+  ["hero-statement", "Hero Statement"],
+  ["quote-card", "Quote Card"],
+  ["protocol-tip", "Protocol Tip"],
+  ["stat-callout", "Stat Callout"],
+  ["therapy-goals", "Therapy Goals"],
+];
+const MINECRAFT_TEMPLATES = [
+  ["mc-advancement", "Advancement"],
+  ["mc-respawn", "Respawn"],
+  ["mc-toolkit", "Toolkit"],
+];
+
 const defaultBlocks = [
-  { id: "1", text: "OCCUPATIONAL THERAPY", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
-  { id: "2", text: "BEING\nYOURSELF", ...BLOCK_PRESETS["Hero Bold"], marginTop: 24 },
-  { id: "3", text: "ISN'T THE\nPROBLEM.", ...BLOCK_PRESETS["Hero Accent"], marginTop: 0 },
-  { id: "4", text: "It's the starting point.", ...BLOCK_PRESETS["Serif Subtitle"], marginTop: 24 },
-  { id: "5", text: "Neuroaffirming. Evidence-informed.\nEnvironment-focused.", ...BLOCK_PRESETS["Body"], marginTop: 24 },
+  { id: "1", text: "OCCUPATIONAL THERAPY", ...presetStyle(BLOCK_PRESETS["Eyebrow"]), marginTop: 0 },
+  { id: "2", text: "BEING\nYOURSELF", ...presetStyle(BLOCK_PRESETS["Hero Bold"]), marginTop: 24 },
+  { id: "3", text: "ISN'T THE\nPROBLEM.", ...presetStyle(BLOCK_PRESETS["Hero Accent"]), marginTop: 0 },
+  { id: "4", text: "It's the starting point.", ...presetStyle(BLOCK_PRESETS["Serif Subtitle"]), marginTop: 24 },
+  { id: "5", text: "Neuroaffirming. Evidence-informed.\nEnvironment-focused.", ...presetStyle(BLOCK_PRESETS["Body"]), marginTop: 24 },
 ];
 let blockIdCounter = 100;
+const AccentContext = createContext(BRANDS["Estus"].accent);
 
 export default function EstusSocialCreator() {
   const [brand, setBrand] = useState("Estus");
@@ -130,10 +363,30 @@ export default function EstusSocialCreator() {
   const [overlayColor, setOverlayColor] = useState("Black");
   const [overlayOpacity, setOverlayOpacity] = useState(0.55);
   const [bgBlur, setBgBlur] = useState(0);
+  const [texture, setTexture] = useState("none");
+  const [texBlockSize, setTexBlockSize] = useState(128);
+  const [texShade, setTexShade] = useState(0.5);
+  const [textures, setTextures] = useState(null);
   const fileInputRef = useRef(null);
   const size = CANVAS_SIZES[canvasSize];
   const scale = Math.min(380 / size.w, 680 / size.h);
   const selected = blocks.find((b) => b.id === selectedId);
+  const accent = BRANDS[brand].accent;
+  const presets = presetsFor(brand);
+
+  // Built after mount so the server-rendered markup and the first client render
+  // agree (there is no canvas to rasterise tiles with during SSR).
+  useEffect(() => {
+    const built = {};
+    TEXTURE_KINDS.forEach((kind) => {
+      if (kind === "none") return;
+      const canvas = makeTextureCanvas(kind);
+      built[kind] = { canvas, url: canvas.toDataURL() };
+    });
+    setTextures(built);
+  }, []);
+
+  const activeTexture = textures && texture !== "none" ? textures[texture] : null;
 
   const handleImageUpload = useCallback((e) => {
     const file = e.target.files?.[0];
@@ -165,31 +418,47 @@ export default function EstusSocialCreator() {
   const switchBrand = useCallback((next) => {
     if (next === brand) return;
     const map = BRAND_REMAP[next];
-    setBlocks((prev) => prev.map((b) => ({ ...b, color: map.text[b.color] || b.color })));
+    const toPixel = next === "Minecraft";
+    const fromPixel = brand === "Minecraft";
+    setBlocks((prev) => prev.map((b) => {
+      const swap = fontSwapFor(next, b.font, b.size);
+      const font = swap ? swap.font : b.font;
+      return {
+        ...b,
+        color: map.text[b.color] || (BRANDS[next].colors[b.color] ? b.color : BRANDS[next].defaultText),
+        font,
+        size: swap ? Math.max(8, Math.round(b.size * swap.scale)) : b.size,
+        lineHeight: swap && swap.minLineHeight ? Math.max(b.lineHeight, swap.minLineHeight) : b.lineHeight,
+        weight: clampWeight(font, b.weight),
+        // Bitmap faces have no italic cut, and the game's hard drop shadow is
+        // the whole look — both are decided by the brand, not carried across it.
+        italic: toPixel ? false : b.italic,
+        pixelShadow: toPixel ? true : fromPixel ? false : b.pixelShadow,
+      };
+    }));
     setBgColor((c) => map.bg[c] || (BRANDS[next].colors[c] ? c : BRANDS[next].defaultBg));
     setOverlayColor((c) => map.overlay[c] || (BRANDS[next].overlays[c] ? c : "Black"));
+    if (toPixel) {
+      setTexture("dirt");
+      setTexShade(0.5);
+    } else if (fromPixel) {
+      setTexture("none");
+    }
     setBrand(next);
   }, [brand]);
 
   const addBlock = useCallback((presetName) => {
-    const preset = BLOCK_PRESETS[presetName];
+    const preset = presets[presetName];
     const newBlock = {
       id: String(++blockIdCounter),
-      text:
-        presetName === "Eyebrow" ? "LABEL" :
-        presetName === "Hero Bold" ? "HEADLINE" :
-        presetName === "Hero Accent" ? "ACCENT" :
-        presetName === "Serif Subtitle" ? "Subtitle here." :
-        presetName === "CTA Label" ? "BUTTON TEXT" :
-        presetName === "Checklist Item" ? "Checklist item." :
-        "Body text here.",
-      ...preset,
+      text: preset.sample,
+      ...presetStyle(preset),
       color: presetColor(preset.color),
       marginTop: 16,
     };
     setBlocks((prev) => [...prev, newBlock]);
     setSelectedId(newBlock.id);
-  }, [presetColor]);
+  }, [presets, presetColor]);
 
   const removeBlock = useCallback((id) => {
     setBlocks((prev) => prev.filter((b) => b.id !== id));
@@ -220,11 +489,16 @@ export default function EstusSocialCreator() {
   const handleExport = useCallback(async () => {
     setExporting(true);
     try {
-      // Ensure all fonts used are loaded before drawing to canvas
+      // Ensure all fonts used are loaded before drawing to canvas. Weight 400 is
+      // requested alongside the block's own weight so a family that ships only
+      // one face (the pixel fonts) still resolves and never silently falls back
+      // to a system font mid-export.
       if (document.fonts) {
-        const fontLoads = blocks.map((b) => {
+        const fontLoads = blocks.flatMap((b) => {
           const style = b.italic ? "italic" : "normal";
-          return document.fonts.load(`${style} ${b.weight} ${b.size}px ${FONTS[b.font]}`);
+          return [b.weight, 400].map((w) =>
+            document.fonts.load(`${style} ${w} ${b.size}px ${FONTS[b.font]}`).catch(() => {})
+          );
         });
         await Promise.all(fontLoads);
         await document.fonts.ready;
@@ -238,6 +512,25 @@ export default function EstusSocialCreator() {
       // Background colour
       ctx.fillStyle = canvasFill(ctx, bgColor, 0, 0, size.w, size.h);
       ctx.fillRect(0, 0, size.w, size.h);
+
+      // Block texture: the 16-texel tile blown up to the chosen block size with
+      // smoothing off, then darkened the way the game dims its menu backdrop.
+      if (activeTexture) {
+        const s = texBlockSize / TEXEL;
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.scale(s, s);
+        ctx.fillStyle = ctx.createPattern(activeTexture.canvas, "repeat");
+        ctx.fillRect(0, 0, size.w / s, size.h / s);
+        ctx.restore();
+        if (texShade > 0) {
+          ctx.save();
+          ctx.globalAlpha = texShade;
+          ctx.fillStyle = "#000000";
+          ctx.fillRect(0, 0, size.w, size.h);
+          ctx.restore();
+        }
+      }
 
       // Background image + overlay
       if (bgImageObj) {
@@ -293,6 +586,21 @@ export default function EstusSocialCreator() {
 
       ctx.textBaseline = "top";
 
+      // One line of type, drawn at an offset in a single colour. Used twice per
+      // line: once for the drop shadow, once for the fill.
+      const paintLine = (block, line, x, drawY, dx, dy, fillStyle) => {
+        ctx.fillStyle = fillStyle;
+        if (block.spacingPx !== 0) {
+          let cx = x + dx;
+          for (const char of line) {
+            ctx.fillText(char, cx, drawY + dy);
+            cx += ctx.measureText(char).width + block.spacingPx;
+          }
+        } else {
+          ctx.fillText(line, x + dx, drawY + dy);
+        }
+      };
+
       measured.forEach((block) => {
         y += block.marginTop;
 
@@ -304,6 +612,8 @@ export default function EstusSocialCreator() {
         // textBaseline "top" draws from the top of the em square, so we offset by half-leading
         // to match the visual position in the browser preview.
         const halfLeading = block.size * (block.lineHeight - 1) / 2;
+        const offset = block.pixelShadow ? shadowOffset(block.size) : 0;
+        const shadowFill = block.pixelShadow ? shadowColorOf(block.color) : null;
 
         block.lines.forEach((line) => {
           // Re-set font in case any previous draw mutated ctx state
@@ -318,18 +628,15 @@ export default function EstusSocialCreator() {
 
           const drawY = y + halfLeading;
 
-          // Gradient fills span the rendered line, so set fill per line
-          ctx.fillStyle = canvasFill(ctx, block.color, x, 0, x + lineW, 0);
-
-          if (block.spacingPx !== 0) {
-            let cx = x;
-            for (const char of line) {
-              ctx.fillText(char, cx, drawY);
-              cx += ctx.measureText(char).width + block.spacingPx;
+          if (shadowFill && line) {
+            paintLine(block, line, x, drawY, offset, offset, shadowFill);
+            if (block.strikethrough) {
+              drawStrike(ctx, block.strikeStyle, x + offset, drawY + offset, lineW, block.size, shadowFill);
             }
-          } else {
-            ctx.fillText(line, x, drawY);
           }
+
+          // Gradient fills span the rendered line, so set fill per line
+          paintLine(block, line, x, drawY, 0, 0, canvasFill(ctx, block.color, x, 0, x + lineW, 0));
 
           if (block.strikethrough && line) {
             drawStrike(ctx, block.strikeStyle, x, drawY, lineW, block.size, solidColor(block.color));
@@ -340,61 +647,98 @@ export default function EstusSocialCreator() {
       });
 
       const link = document.createElement("a");
-      link.download = `${brand === "Health" ? "estus-health" : "estus"}-social-${Date.now()}.png`;
+      link.download = `${BRANDS[brand].slug}-social-${Date.now()}.png`;
       link.href = canvas.toDataURL("image/png");
       link.click();
     } catch (e) {
       console.error("Export error:", e);
     }
     setExporting(false);
-  }, [blocks, size, bgColor, bgImageObj, bgFit, bgPositionX, bgPositionY, bgBlur, overlayColor, overlayOpacity, padding, verticalAlign, brand]);
+  }, [blocks, size, bgColor, bgImageObj, bgFit, bgPositionX, bgPositionY, bgBlur, overlayColor, overlayOpacity, padding, verticalAlign, brand, activeTexture, texBlockSize, texShade]);
+
+  // Templates are authored once, against the Estus preset sizes. `block()`
+  // instantiates one against the active brand's pack: any explicit `size` is
+  // rescaled by that brand's ratio for the same preset, so a 160px stat set in
+  // Oswald comes out at the equivalent 97px in Press Start 2P instead of
+  // running off the canvas. Brands sharing the base pack get a ratio of 1 and
+  // therefore byte-identical output.
+  const block = useCallback((presetName, text, overrides = {}) => {
+    const style = presetStyle(presets[presetName]);
+    const ratio = style.size / BLOCK_PRESETS[presetName].size;
+    const out = { id: String(++blockIdCounter), text, ...style, ...overrides };
+    if (overrides.size != null) out.size = Math.max(8, Math.round(overrides.size * ratio));
+    out.color = presetColor(overrides.color || style.color);
+    return out;
+  }, [presets, presetColor]);
 
   const applyTemplate = useCallback((name) => {
-    const setBrandBlocks = (arr) => setBlocks(arr.map((b) => ({ ...b, color: presetColor(b.color) })));
-    if (name === "hero-statement") {
-      setBrandBlocks([
-        { id: String(++blockIdCounter), text: "OCCUPATIONAL THERAPY", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
-        { id: String(++blockIdCounter), text: "BEING\nYOURSELF", ...BLOCK_PRESETS["Hero Bold"], marginTop: 24 },
-        { id: String(++blockIdCounter), text: "ISN'T THE\nPROBLEM.", ...BLOCK_PRESETS["Hero Accent"], marginTop: 0 },
-        { id: String(++blockIdCounter), text: "It's the starting point.", ...BLOCK_PRESETS["Serif Subtitle"], marginTop: 24 },
-        { id: String(++blockIdCounter), text: "Neuroaffirming. Evidence-informed.\nEnvironment-focused.", ...BLOCK_PRESETS["Body"], marginTop: 24 },
-      ]);
-    } else if (name === "quote-card") {
-      setBrandBlocks([
-        { id: String(++blockIdCounter), text: "ESTUS HEALTH", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
-        { id: String(++blockIdCounter), text: "Your brain isn't broken.\nThe system wasn't\nbuilt for you.", ...BLOCK_PRESETS["Serif Subtitle"], size: 44, marginTop: 40 },
-        { id: String(++blockIdCounter), text: "www.estushealth.com", ...BLOCK_PRESETS["Body"], size: 18, color: "Mid Grey", marginTop: 48 },
-      ]);
-    } else if (name === "protocol-tip") {
-      setBrandBlocks([
-        { id: String(++blockIdCounter), text: "PERFORMANCE LAB: PROTOCOLS", ...BLOCK_PRESETS["Eyebrow"], marginTop: 0 },
-        { id: String(++blockIdCounter), text: "PROTOCOL #12", ...BLOCK_PRESETS["Hero Bold"], size: 64, marginTop: 24 },
-        { id: String(++blockIdCounter), text: "THE 2-MINUTE\nRULE", ...BLOCK_PRESETS["Hero Accent"], size: 72, marginTop: 0 },
-        { id: String(++blockIdCounter), text: "If it takes less than 2 minutes,\ndo it now. Don't add it to the list.", ...BLOCK_PRESETS["Body"], size: 22, color: "Cream", marginTop: 32 },
-        { id: String(++blockIdCounter), text: "performancelab@estushealth.com", ...BLOCK_PRESETS["Body"], size: 16, color: "Mid Grey", marginTop: 40 },
-      ]);
-    } else if (name === "stat-callout") {
-      setBrandBlocks([
-        { id: String(++blockIdCounter), text: "DID YOU KNOW?", ...BLOCK_PRESETS["Eyebrow"], color: "Estus Orange", marginTop: 0 },
-        { id: String(++blockIdCounter), text: "70%", ...BLOCK_PRESETS["Hero Bold"], size: 160, color: "White", marginTop: 16 },
-        { id: String(++blockIdCounter), text: "of late-diagnosed autistic adults\nreport burnout as their\nprimary presentation.", ...BLOCK_PRESETS["Body"], size: 26, color: "Cream", marginTop: 8 },
-        { id: String(++blockIdCounter), text: "ESTUS HEALTH", ...BLOCK_PRESETS["Eyebrow"], marginTop: 48 },
-      ]);
-    } else if (name === "therapy-goals") {
-      setBrandBlocks([
-        { id: String(++blockIdCounter), text: "OCCUPATIONAL THERAPY", ...BLOCK_PRESETS["Eyebrow"], align: "left", marginTop: 0 },
-        { id: String(++blockIdCounter), text: "WHAT IS YOUR\nNEXT THERAPY\nGOAL?", ...BLOCK_PRESETS["Hero Bold"], size: 72, align: "left", marginTop: 20 },
-        { id: String(++blockIdCounter), text: "Set a regular sleep schedule", ...BLOCK_PRESETS["Checklist Item"], marginTop: 36, strikethrough: true, strikeStyle: "straight" },
-        { id: String(++blockIdCounter), text: "Build a sensory toolkit", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12, strikethrough: true, strikeStyle: "wavy" },
-        { id: String(++blockIdCounter), text: "Practice unmasking with safe people", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
-        { id: String(++blockIdCounter), text: "Identify burnout triggers", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
-        { id: String(++blockIdCounter), text: "Plan recovery time after socialising", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
-        { id: String(++blockIdCounter), text: "Ask for accommodations at work", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
-        { id: String(++blockIdCounter), text: "Schedule a self-care ritual weekly", ...BLOCK_PRESETS["Checklist Item"], marginTop: 12 },
-      ]);
-    }
+    const T = {
+      "hero-statement": () => [
+        block("Eyebrow", "OCCUPATIONAL THERAPY", { marginTop: 0 }),
+        block("Hero Bold", "BEING\nYOURSELF", { marginTop: 24 }),
+        block("Hero Accent", "ISN'T THE\nPROBLEM.", { marginTop: 0 }),
+        block("Serif Subtitle", "It's the starting point.", { marginTop: 24 }),
+        block("Body", "Neuroaffirming. Evidence-informed.\nEnvironment-focused.", { marginTop: 24 }),
+      ],
+      "quote-card": () => [
+        block("Eyebrow", "ESTUS HEALTH", { marginTop: 0 }),
+        block("Serif Subtitle", "Your brain isn't broken.\nThe system wasn't\nbuilt for you.", { size: 44, marginTop: 40 }),
+        block("Body", "www.estushealth.com", { size: 18, color: "Mid Grey", marginTop: 48 }),
+      ],
+      "protocol-tip": () => [
+        block("Eyebrow", "PERFORMANCE LAB: PROTOCOLS", { marginTop: 0 }),
+        block("Hero Bold", "PROTOCOL #12", { size: 64, marginTop: 24 }),
+        block("Hero Accent", "THE 2-MINUTE\nRULE", { size: 72, marginTop: 0 }),
+        block("Body", "If it takes less than 2 minutes,\ndo it now. Don't add it to the list.", { size: 22, color: "Cream", marginTop: 32 }),
+        block("Body", "performancelab@estushealth.com", { size: 16, color: "Mid Grey", marginTop: 40 }),
+      ],
+      "stat-callout": () => [
+        block("Eyebrow", "DID YOU KNOW?", { color: "Estus Orange", marginTop: 0 }),
+        block("Hero Bold", "70%", { size: 160, color: "White", marginTop: 16 }),
+        block("Body", "of late-diagnosed autistic adults\nreport burnout as their\nprimary presentation.", { size: 26, color: "Cream", marginTop: 8 }),
+        block("Eyebrow", "ESTUS HEALTH", { marginTop: 48 }),
+      ],
+      "therapy-goals": () => [
+        block("Eyebrow", "OCCUPATIONAL THERAPY", { align: "left", marginTop: 0 }),
+        block("Hero Bold", "WHAT IS YOUR\nNEXT THERAPY\nGOAL?", { size: 72, align: "left", marginTop: 20 }),
+        block("Checklist Item", "Set a regular sleep schedule", { marginTop: 36, strikethrough: true, strikeStyle: "straight" }),
+        block("Checklist Item", "Build a sensory toolkit", { marginTop: 12, strikethrough: true, strikeStyle: "wavy" }),
+        block("Checklist Item", "Practice unmasking with safe people", { marginTop: 12 }),
+        block("Checklist Item", "Identify burnout triggers", { marginTop: 12 }),
+        block("Checklist Item", "Plan recovery time after socialising", { marginTop: 12 }),
+        block("Checklist Item", "Ask for accommodations at work", { marginTop: 12 }),
+        block("Checklist Item", "Schedule a self-care ritual weekly", { marginTop: 12 }),
+      ],
+      // The Minecraft-only templates are written in the Minecraft palette's own
+      // names — they are offered only under that brand, and `presetColor` passes
+      // a name through untouched when the active brand already owns it.
+      "mc-advancement": () => [
+        block("Eyebrow", "ADVANCEMENT MADE!", { marginTop: 0 }),
+        block("Hero Bold", "TAKING", { marginTop: 28 }),
+        block("Hero Accent", "INVENTORY", { marginTop: 0 }),
+        block("Serif Subtitle", "Noticing what you're carrying\nis the first step to putting\nsome of it down.", { marginTop: 32 }),
+        block("Body", "estushealth.com", { size: 20, color: "Stone Grey", marginTop: 44 }),
+      ],
+      "mc-respawn": () => [
+        block("Hero Bold", "YOU DIED!", { size: 120, color: "Redstone", marginTop: 0 }),
+        block("Serif Subtitle", "Burnout is not a game over.", { marginTop: 36 }),
+        block("Body", "Your inventory is intact.\nRest at the checkpoint,\nthen come back for it.", { size: 26, color: "Iron Grey", marginTop: 28 }),
+        block("CTA Label", "RESPAWN", { size: 32, marginTop: 48 }),
+      ],
+      "mc-toolkit": () => [
+        block("Eyebrow", "SENSORY TOOLKIT", { align: "left", marginTop: 0 }),
+        block("Hero Bold", "INVENTORY\nCHECK", { size: 72, align: "left", marginTop: 20 }),
+        block("Checklist Item", "Loop earplugs", { marginTop: 36, strikethrough: true, strikeStyle: "straight" }),
+        block("Checklist Item", "Sunglasses for strip lighting", { marginTop: 12, strikethrough: true, strikeStyle: "straight" }),
+        block("Checklist Item", "Fidget you actually like", { marginTop: 12 }),
+        block("Checklist Item", "Snack that needs no decision", { marginTop: 12 }),
+        block("Checklist Item", "Exit plan, agreed in advance", { marginTop: 12 }),
+        block("Checklist Item", "One person who gets it", { marginTop: 12 }),
+      ],
+    };
+    if (T[name]) setBlocks(T[name]());
     setSelectedId(null);
-  }, [presetColor]);
+  }, [block]);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") setSelectedId(null); };
@@ -405,6 +749,10 @@ export default function EstusSocialCreator() {
   const renderPreviewBlock = (block) => {
     const text = block.uppercase ? block.text.toUpperCase() : block.text;
     const lines = text.split("\n");
+    // Same integer offset the export uses, expressed in preview pixels, so the
+    // shadow lands identically in both.
+    const offset = block.pixelShadow ? shadowOffset(block.size) * scale : 0;
+    const shadowFill = block.pixelShadow ? shadowColorOf(block.color) : null;
     return (
       <div
         key={block.id}
@@ -413,7 +761,7 @@ export default function EstusSocialCreator() {
           marginTop: block.marginTop * scale,
           textAlign: block.align,
           cursor: "pointer",
-          outline: selectedId === block.id ? "2px solid #E87A2E" : "2px solid transparent",
+          outline: selectedId === block.id ? `2px solid ${accent}` : "2px solid transparent",
           outlineOffset: 4 * scale,
           borderRadius: 2,
           transition: "outline-color 0.15s",
@@ -434,8 +782,36 @@ export default function EstusSocialCreator() {
               letterSpacing: block.letterSpacing * scale * (block.size / 18),
               lineHeight: block.lineHeight,
               whiteSpace: "pre",
+              position: "relative",
             }}
           >
+            {shadowFill && line && (
+              // A full-width absolute copy that inherits text-align, wrapping an
+              // inline-block twin of the fill span. Matching the structure means
+              // it matches the geometry — including the strike overlay, which is
+              // positioned against its inline-block parent. Both layers are
+              // positioned with z-index auto, so tree order keeps this one behind.
+              <span
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  transform: `translate(${offset}px, ${offset}px)`,
+                  textAlign: "inherit",
+                  color: shadowFill,
+                  pointerEvents: "none",
+                }}
+              >
+                <span style={{ position: "relative", display: "inline-block" }}>
+                  {line}
+                  {block.strikethrough && (
+                    <StrikeOverlay variant={block.strikeStyle} color={shadowFill} fontSize={block.size * scale} />
+                  )}
+                </span>
+              </span>
+            )}
             <span
               style={{
                 position: "relative",
@@ -465,6 +841,7 @@ export default function EstusSocialCreator() {
   };
 
   return (
+    <AccentContext.Provider value={accent}>
     <div style={{ display: "flex", height: "100vh", background: "#111", color: "#eee", fontFamily: "'Inter', sans-serif", overflow: "hidden" }}>
       <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display: "none" }} />
       {/* Preview */}
@@ -477,7 +854,7 @@ export default function EstusSocialCreator() {
               style={{
                 padding: "4px 10px",
                 fontSize: 11,
-                background: canvasSize === name ? "#E87A2E" : "#333",
+                background: canvasSize === name ? accent : "#333",
                 color: "#fff",
                 border: "none",
                 borderRadius: 4,
@@ -505,6 +882,24 @@ export default function EstusSocialCreator() {
             position: "relative",
           }}
         >
+          {activeTexture && (
+            <>
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  backgroundImage: `url(${activeTexture.url})`,
+                  backgroundSize: `${texBlockSize * scale}px ${texBlockSize * scale}px`,
+                  backgroundRepeat: "repeat",
+                  imageRendering: "pixelated",
+                  zIndex: 0,
+                }}
+              />
+              {texShade > 0 && (
+                <div style={{ position: "absolute", inset: 0, background: "#000", opacity: texShade, zIndex: 0 }} />
+              )}
+            </>
+          )}
           {bgImage && (
             <>
               <div
@@ -548,7 +943,7 @@ export default function EstusSocialCreator() {
               fontFamily: "'Oswald', sans-serif",
               textTransform: "uppercase",
               letterSpacing: 2,
-              background: exporting ? "#666" : "#E87A2E",
+              background: exporting ? "#666" : accent,
               color: "#fff",
               border: "none",
               borderRadius: 6,
@@ -603,13 +998,7 @@ export default function EstusSocialCreator() {
           </div>
           <SectionLabel>Templates</SectionLabel>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 16 }}>
-            {[
-              ["hero-statement", "Hero Statement"],
-              ["quote-card", "Quote Card"],
-              ["protocol-tip", "Protocol Tip"],
-              ["stat-callout", "Stat Callout"],
-              ["therapy-goals", "Therapy Goals"],
-            ].map(([key, label]) => (
+            {[...BASE_TEMPLATES, ...(brand === "Minecraft" ? MINECRAFT_TEMPLATES : [])].map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => applyTemplate(key)}
@@ -642,6 +1031,56 @@ export default function EstusSocialCreator() {
               <option value="bottom">Bottom</option>
             </select>
           </Row>
+          {brand === "Minecraft" && (
+            <>
+              <SectionLabel style={{ marginTop: 20 }}>Block Texture</SectionLabel>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+                {TEXTURE_KINDS.map((kind) => (
+                  <button
+                    key={kind}
+                    onClick={() => setTexture(kind)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px",
+                      fontSize: 11,
+                      fontWeight: 500,
+                      background: texture === kind ? `${accent}22` : "#2a2a2a",
+                      color: texture === kind ? "#fff" : "#ccc",
+                      border: `1px solid ${texture === kind ? accent : "#444"}`,
+                      borderRadius: 4,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 16,
+                        height: 16,
+                        flexShrink: 0,
+                        borderRadius: 2,
+                        border: "1px solid #555",
+                        background: textures?.[kind] ? `url(${textures[kind].url})` : "#111",
+                        backgroundSize: "32px 32px",
+                        imageRendering: "pixelated",
+                      }}
+                    />
+                    {TEXTURE_LABELS[kind]}
+                  </button>
+                ))}
+              </div>
+              {texture !== "none" && (
+                <>
+                  <Row label="Block Size">
+                    <RangeInput value={texBlockSize} min={32} max={320} step={8} onChange={setTexBlockSize} />
+                  </Row>
+                  <Row label="Shade">
+                    <RangeInput value={texShade} min={0} max={0.9} step={0.05} onChange={setTexShade} />
+                  </Row>
+                </>
+              )}
+            </>
+          )}
           <SectionLabel style={{ marginTop: 20 }}>Background Image</SectionLabel>
           {!bgImage ? (
             <button
@@ -692,7 +1131,7 @@ export default function EstusSocialCreator() {
                     <button
                       key={f}
                       onClick={() => setBgFit(f)}
-                      style={{ padding: "4px 10px", fontSize: 11, background: bgFit === f ? "#E87A2E" : "#333", color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", textTransform: "capitalize" }}
+                      style={{ padding: "4px 10px", fontSize: 11, background: bgFit === f ? accent : "#333", color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", textTransform: "capitalize" }}
                     >
                       {f}
                     </button>
@@ -718,7 +1157,7 @@ export default function EstusSocialCreator() {
                       key={name}
                       title={name}
                       onClick={() => setOverlayColor(name)}
-                      style={{ width: 22, height: 22, borderRadius: 3, background: hex, border: overlayColor === name ? "2px solid #E87A2E" : "1px solid #555", cursor: "pointer", padding: 0 }}
+                      style={{ width: 22, height: 22, borderRadius: 3, background: hex, border: overlayColor === name ? `2px solid ${accent}` : "1px solid #555", cursor: "pointer", padding: 0 }}
                     />
                   ))}
                 </div>
@@ -730,13 +1169,13 @@ export default function EstusSocialCreator() {
           )}
           <SectionLabel style={{ marginTop: 20 }}>Add Text Block</SectionLabel>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 16 }}>
-            {Object.keys(BLOCK_PRESETS).map((name) => (
+            {Object.entries(presets).map(([name, preset]) => (
               <button
                 key={name}
                 onClick={() => addBlock(name)}
                 style={{ padding: "8px 6px", fontSize: 11, fontWeight: 500, background: "#2a2a2a", color: "#ccc", border: "1px solid #444", borderRadius: 4, cursor: "pointer" }}
               >
-                + {name}
+                + {preset.label || name}
               </button>
             ))}
           </div>
@@ -749,8 +1188,8 @@ export default function EstusSocialCreator() {
                 style={{
                   padding: "6px 8px",
                   fontSize: 11,
-                  background: selectedId === b.id ? "#E87A2E22" : "#222",
-                  border: selectedId === b.id ? "1px solid #E87A2E" : "1px solid #333",
+                  background: selectedId === b.id ? `${accent}22` : "#222",
+                  border: `1px solid ${selectedId === b.id ? accent : "#333"}`,
                   borderRadius: 4,
                   cursor: "pointer",
                   display: "flex",
@@ -785,7 +1224,13 @@ export default function EstusSocialCreator() {
                 style={{ width: "100%", background: "#222", color: "#eee", border: "1px solid #444", borderRadius: 4, padding: 8, fontSize: 13, fontFamily: "inherit", resize: "vertical", marginBottom: 12, boxSizing: "border-box" }}
               />
               <Row label="Font">
-                <select value={selected.font} onChange={(e) => updateBlock(selected.id, { font: e.target.value })} style={selectStyle}>
+                <select
+                  value={selected.font}
+                  // Weights that the family doesn't ship would be synthesised;
+                  // snap to the nearest real face instead.
+                  onChange={(e) => updateBlock(selected.id, { font: e.target.value, weight: clampWeight(e.target.value, selected.weight) })}
+                  style={selectStyle}
+                >
                   {Object.keys(FONTS).map((f) => <option key={f} value={f}>{f}</option>)}
                 </select>
               </Row>
@@ -794,7 +1239,7 @@ export default function EstusSocialCreator() {
               </Row>
               <Row label="Weight">
                 <select value={selected.weight} onChange={(e) => updateBlock(selected.id, { weight: Number(e.target.value) })} style={selectStyle}>
-                  {[300, 400, 500, 600, 700].map((w) => <option key={w} value={w}>{w}</option>)}
+                  {FONT_WEIGHTS[selected.font].map((w) => <option key={w} value={w}>{w}</option>)}
                 </select>
               </Row>
               <Row label="Color">
@@ -806,7 +1251,7 @@ export default function EstusSocialCreator() {
                     <button
                       key={a}
                       onClick={() => updateBlock(selected.id, { align: a })}
-                      style={{ padding: "4px 10px", fontSize: 11, background: selected.align === a ? "#E87A2E" : "#333", color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", textTransform: "capitalize" }}
+                      style={{ padding: "4px 10px", fontSize: 11, background: selected.align === a ? accent : "#333", color: "#fff", border: "none", borderRadius: 3, cursor: "pointer", textTransform: "capitalize" }}
                     >
                       {a}
                     </button>
@@ -824,9 +1269,10 @@ export default function EstusSocialCreator() {
               </Row>
               <Row label="Style">
                 <div style={{ display: "flex", gap: 4 }}>
-                  <ToggleBtn active={selected.uppercase} onClick={() => updateBlock(selected.id, { uppercase: !selected.uppercase })}>ABC</ToggleBtn>
-                  <ToggleBtn active={selected.italic} onClick={() => updateBlock(selected.id, { italic: !selected.italic })}><em>I</em></ToggleBtn>
-                  <ToggleBtn active={!!selected.strikethrough} onClick={() => updateBlock(selected.id, { strikethrough: !selected.strikethrough })}><span style={{ textDecoration: "line-through" }}>S</span></ToggleBtn>
+                  <ToggleBtn title="Uppercase" active={selected.uppercase} onClick={() => updateBlock(selected.id, { uppercase: !selected.uppercase })}>ABC</ToggleBtn>
+                  <ToggleBtn title="Italic" active={selected.italic} onClick={() => updateBlock(selected.id, { italic: !selected.italic })}><em>I</em></ToggleBtn>
+                  <ToggleBtn title="Strikethrough" active={!!selected.strikethrough} onClick={() => updateBlock(selected.id, { strikethrough: !selected.strikethrough })}><span style={{ textDecoration: "line-through" }}>S</span></ToggleBtn>
+                  <ToggleBtn title="Pixel drop shadow" active={!!selected.pixelShadow} onClick={() => updateBlock(selected.id, { pixelShadow: !selected.pixelShadow })}>◤</ToggleBtn>
                 </div>
               </Row>
               {selected.strikethrough && (
@@ -840,7 +1286,7 @@ export default function EstusSocialCreator() {
                         style={{
                           padding: "3px 8px",
                           fontSize: 10,
-                          background: (selected.strikeStyle || "straight") === s ? "#E87A2E" : "#333",
+                          background: (selected.strikeStyle || "straight") === s ? accent : "#333",
                           color: "#fff",
                           border: "none",
                           borderRadius: 3,
@@ -857,13 +1303,13 @@ export default function EstusSocialCreator() {
               <div style={{ marginTop: 12 }}>
                 <div style={{ fontSize: 10, color: "#666", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Apply Preset Style</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                  {Object.entries(BLOCK_PRESETS).map(([name, preset]) => (
+                  {Object.entries(presets).map(([name, preset]) => (
                     <button
                       key={name}
-                      onClick={() => updateBlock(selected.id, { ...preset, color: presetColor(preset.color) })}
+                      onClick={() => updateBlock(selected.id, { ...presetStyle(preset), color: presetColor(preset.color) })}
                       style={{ padding: "3px 8px", fontSize: 10, background: "#2a2a2a", color: "#999", border: "1px solid #444", borderRadius: 3, cursor: "pointer" }}
                     >
-                      {name}
+                      {preset.label || name}
                     </button>
                   ))}
                 </div>
@@ -873,6 +1319,7 @@ export default function EstusSocialCreator() {
         </div>
       )}
     </div>
+    </AccentContext.Provider>
   );
 }
 
@@ -1088,8 +1535,9 @@ function StrikeOverlay({ variant, color, fontSize }) {
 }
 
 function SectionLabel({ children, style }) {
+  const accent = useContext(AccentContext);
   return (
-    <div style={{ fontSize: 10, fontWeight: 600, color: "#E87A2E", textTransform: "uppercase", letterSpacing: 2, marginBottom: 8, fontFamily: "'Oswald', sans-serif", ...style }}>
+    <div style={{ fontSize: 10, fontWeight: 600, color: accent, textTransform: "uppercase", letterSpacing: 2, marginBottom: 8, fontFamily: "'Oswald', sans-serif", ...style }}>
       {children}
     </div>
   );
@@ -1105,9 +1553,10 @@ function Row({ label, children }) {
 }
 
 function RangeInput({ value, min, max, step = 1, onChange }) {
+  const accent = useContext(AccentContext);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: 100, accentColor: "#E87A2E" }} />
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: 100, accentColor: accent }} />
       <span style={{ fontSize: 11, color: "#aaa", minWidth: 32, textAlign: "right" }}>{typeof value === "number" && value % 1 !== 0 ? value.toFixed(2) : value}</span>
     </div>
   );
@@ -1132,7 +1581,8 @@ function ColorPicker({ value, onChange, colors, accent }) {
 }
 
 function MiniBtn({ children, onClick, danger, active }) {
-  const bg = danger ? "#4a2020" : active ? "#E87A2E" : "#333";
+  const accent = useContext(AccentContext);
+  const bg = danger ? "#4a2020" : active ? accent : "#333";
   const color = danger ? "#f88" : active ? "#fff" : "#aaa";
   return (
     <button
@@ -1144,11 +1594,13 @@ function MiniBtn({ children, onClick, danger, active }) {
   );
 }
 
-function ToggleBtn({ children, active, onClick }) {
+function ToggleBtn({ children, active, onClick, title }) {
+  const accent = useContext(AccentContext);
   return (
     <button
       onClick={onClick}
-      style={{ padding: "4px 10px", fontSize: 11, background: active ? "#E87A2E" : "#333", color: "#fff", border: "none", borderRadius: 3, cursor: "pointer" }}
+      title={title}
+      style={{ padding: "4px 10px", fontSize: 11, background: active ? accent : "#333", color: "#fff", border: "none", borderRadius: 3, cursor: "pointer" }}
     >
       {children}
     </button>
